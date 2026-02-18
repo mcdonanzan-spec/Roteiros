@@ -1,0 +1,7 @@
+{
+  "name": "SP Route Optimizer & Housing Agent",
+  "description": "An advanced logistics and housing optimization tool for technical visit management in São Paulo, featuring geographic clustering, weekly/monthly scheduling, and residential efficiency analysis.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
