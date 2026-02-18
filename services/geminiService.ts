@@ -11,27 +11,23 @@ export async function analyzeLogistics(
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `
-    Aja como um Agente Especialista em Logística Urbana de São Paulo (Metrô/CPTM).
+    Aja como um Agente Especialista em Logística Urbana de São Paulo, focado estritamente no sistema de METRÔ e TREM (CPTM).
     
     DADOS DE ENTRADA:
-    Moradia: ${currentAddress}
-    Obras: ${JSON.stringify(sites)}
+    Moradia Atual: ${currentAddress}
+    Obras para Visita: ${JSON.stringify(sites)}
 
-    OBJETIVO:
-    Você deve criar uma agenda de visitas para o MÊS INTEIRO (4 semanas). 
-    Existem ${sites.length} obras no total. 
-    Cada obra deve ser visitada EXATAMENTE 1 vez no mês.
+    OBJETIVO ESTRATÉGICO:
+    1. PRIORIDADE METRÔ: Todas as rotas e cálculos devem priorizar o transporte sobre trilhos. 
+    2. AGENDA MENSAL: Distribua as ${sites.length} obras ao longo de 4 semanas (20-22 dias úteis).
+    3. VISITA ÚNICA: Cada obra deve ser visitada 1 vez por mês.
+    4. CLUSTERIZAÇÃO POR LINHA: Agrupe visitas que utilizem a mesma linha (ex: Linha 4-Amarela, Linha 9-Esmeralda) para otimizar o tempo de baldeação.
+    5. TEMPOS: Inclua o tempo de caminhada até a estação e da estação até a obra. Se a obra for distante do metrô, marque como 'Turno Integral'.
 
-    REGRAS DE DISTRIBUIÇÃO:
-    1. AGENDA MENSAL OBRIGATÓRIA: Distribua as ${sites.length} obras ao longo das 4 semanas na propriedade 'monthlyAgenda'.
-    2. CARGA DE TRABALHO: Planeje cerca de 1 a 2 obras por dia útil, dependendo da proximidade.
-    3. FOCO EM TRILHOS: Agrupe obras que usem a mesma linha de metrô/trem no mesmo dia ou semana.
-    4. COMPLEXOS: Se houver obras no mesmo endereço ou rua, coloque-as no mesmo dia.
-    5. NOMES: Use os nomes das obras (ex: "Rio São Francisco", "Rio Madeira") para preencher os dias.
+    NOMES DAS OBRAS: Use os nomes reais da planilha (ex: "Rio São Francisco", "Rio Madeira") como o destino principal.
 
-    ESTRUTURA DO ROTEIRO:
-    O 'weeklyRoute' deve ser apenas um exemplo detalhado da Semana 1.
-    O 'monthlyAgenda' deve conter o planejamento COMPLETO de todas as obras fornecidas.
+    RETORNO:
+    Preencha obrigatoriamente a 'monthlyAgenda' com TODAS as obras fornecidas.
     `,
     config: {
       responseMimeType: "application/json",
