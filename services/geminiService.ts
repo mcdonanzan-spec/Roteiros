@@ -17,18 +17,21 @@ export async function analyzeLogistics(
     Moradia: ${currentAddress}
     Obras: ${JSON.stringify(sites)}
 
-    OBJETIVO PRINCIPAL:
-    Criar uma agenda MENSAL (4 semanas). Cada obra deve ser visitada apenas 1 vez no mês.
-    Distribua as visitas de forma equilibrada nos dias úteis, evitando acúmulo em uma só semana.
+    OBJETIVO:
+    Você deve criar uma agenda de visitas para o MÊS INTEIRO (4 semanas). 
+    Existem ${sites.length} obras no total. 
+    Cada obra deve ser visitada EXATAMENTE 1 vez no mês.
 
-    REGRAS DE NEGÓCIO:
-    1. DISTRIBUIÇÃO MENSAL: Não tente colocar todas as obras na primeira semana. Use as 4 semanas do mês.
-    2. MODAL TRILHOS: Identifique a melhor linha de metrô/trem para cada obra.
-    3. COMPLEXOS/PROXIMIDADE: Obras que são muito próximas (mesma rua ou bairro) devem ser visitadas no mesmo dia (máx 3-4 obras se forem um "complexo").
-    4. CIDADES SATÉLITES: Obras em Mogi, Taboão, etc., devem ocupar um "Turno Integral" devido ao tempo de deslocamento.
-    5. FORMATO DE ROTA (Referência): Inclua no campo 'estimatedTravelTime' a linha utilizada, ex: "45 min (Ida via Linha 1-Azul)".
+    REGRAS DE DISTRIBUIÇÃO:
+    1. AGENDA MENSAL OBRIGATÓRIA: Distribua as ${sites.length} obras ao longo das 4 semanas na propriedade 'monthlyAgenda'.
+    2. CARGA DE TRABALHO: Planeje cerca de 1 a 2 obras por dia útil, dependendo da proximidade.
+    3. FOCO EM TRILHOS: Agrupe obras que usem a mesma linha de metrô/trem no mesmo dia ou semana.
+    4. COMPLEXOS: Se houver obras no mesmo endereço ou rua, coloque-as no mesmo dia.
+    5. NOMES: Use os nomes das obras (ex: "Rio São Francisco", "Rio Madeira") para preencher os dias.
 
-    NOMES DAS OBRAS: Os nomes como "Rio São Francisco" ou "Rio Madeira" vêm da coluna 'Nome da Obra'. Utilize-os para identificar os destinos.
+    ESTRUTURA DO ROTEIRO:
+    O 'weeklyRoute' deve ser apenas um exemplo detalhado da Semana 1.
+    O 'monthlyAgenda' deve conter o planejamento COMPLETO de todas as obras fornecidas.
     `,
     config: {
       responseMimeType: "application/json",
@@ -79,7 +82,6 @@ export async function analyzeLogistics(
           },
           weeklyRoute: {
             type: Type.ARRAY,
-            description: "Exemplo de uma semana típica (Padrão de Roteiro)",
             items: {
               type: Type.OBJECT,
               properties: {
@@ -93,12 +95,21 @@ export async function analyzeLogistics(
           },
           monthlyAgenda: {
             type: Type.ARRAY,
-            description: "Distribuição completa das obras pelas 4 semanas",
             items: {
               type: Type.OBJECT,
               properties: {
                 week: { type: Type.NUMBER },
-                schedule: { type: Type.OBJECT }
+                schedule: { 
+                  type: Type.OBJECT,
+                  properties: {
+                    Segunda: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Terça: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Quarta: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Quinta: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Sexta: { type: Type.ARRAY, items: { type: Type.STRING } }
+                  },
+                  required: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]
+                }
               },
               required: ["week", "schedule"]
             }
