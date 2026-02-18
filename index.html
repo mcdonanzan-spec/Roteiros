@@ -17,6 +17,19 @@
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.3);
         }
+        @media print {
+            body {
+                background-color: white !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            @page {
+                margin: 1.5cm;
+            }
+        }
     </style>
 <script type="importmap">
 {
