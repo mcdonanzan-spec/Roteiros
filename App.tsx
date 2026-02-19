@@ -64,14 +64,20 @@ const App: React.FC = () => {
   };
 
   const handleDownloadPDF = () => {
-    const originalTitle = document.title;
-    document.title = `Roteiro_Logistico_SP_${new Date().toLocaleDateString().replace(/\//g, '-')}`;
-    
-    // Pequeno delay para garantir que o título foi alterado e o DOM está estável
-    setTimeout(() => {
+    try {
+      const originalTitle = document.title;
+      const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
+      document.title = `Roteiro_SP_${dateStr}`;
+      
+      // Chamada direta para evitar bloqueio de popup/scripts do navegador
       window.print();
+      
+      // Restaura o título após a abertura da caixa de diálogo
       document.title = originalTitle;
-    }, 100);
+    } catch (err) {
+      console.error("Falha ao imprimir:", err);
+      alert("Para salvar como PDF, use a função de impressão do seu navegador (Ctrl+P).");
+    }
   };
 
   const EfficiencyBadge = ({ type }: { type: string }) => {
@@ -101,19 +107,21 @@ const App: React.FC = () => {
             </span>
           </p>
         </div>
-        <div className="flex gap-2 print:hidden">
+        <div className="flex gap-2 print:hidden items-center">
            {result && (
              <button 
                onClick={handleDownloadPDF}
-               className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100"
+               type="button"
+               className="relative z-10 px-5 py-2.5 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
              >
                <DocumentArrowDownIcon className="h-5 w-5" />
-               Salvar PDF do Plano
+               Salvar PDF
              </button>
            )}
            <button 
              onClick={() => setResult(null)} 
-             className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+             type="button"
+             className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 active:scale-95 transition-colors cursor-pointer"
            >
              {result ? 'Novo Roteiro' : 'Limpar'}
            </button>
@@ -200,7 +208,7 @@ const App: React.FC = () => {
             </div>
           </section>
 
-          {/* Site Visualizer - MAPA DE CLUSTERS */}
+          {/* Site Visualizer */}
           <section className="print:break-inside-avoid">
              <div className="mb-6 flex items-center gap-3">
                 <MapIcon className="h-6 w-6 text-indigo-500" />
