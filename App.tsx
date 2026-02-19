@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ConstructionSite, AnalysisResult } from './types';
 import { analyzeLogistics } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [currentAddress, setCurrentAddress] = useState('');
   const [rawInput, setRawInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,22 +64,31 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadPDF = () => {
-    try {
-      const originalTitle = document.title;
-      const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
-      document.title = `Roteiro_SP_${dateStr}`;
-      
-      // Chamada direta para evitar bloqueio de popup/scripts do navegador
-      window.print();
-      
-      // Restaura o título após a abertura da caixa de diálogo
-      document.title = originalTitle;
-    } catch (err) {
-      console.error("Falha ao imprimir:", err);
-      alert("Para salvar como PDF, use a função de impressão do seu navegador (Ctrl+P).");
-    }
-  };
+  const handleDownloadPDF = useCallback((e: React.MouseEvent) => {
+    // Prevenção total de bolhas de evento e comportamentos do navegador
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setPrinting(true);
+    
+    // Pequeno delay para permitir que o estado do React (setPrinting) seja refletido na UI
+    setTimeout(() => {
+      try {
+        const originalTitle = document.title;
+        const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
+        document.title = `Roteiro_Logistico_SP_${dateStr}`;
+        
+        window.print();
+        
+        document.title = originalTitle;
+      } catch (err) {
+        console.error("Erro ao disparar impressão:", err);
+        alert("Não foi possível abrir a janela de impressão. Tente usar Ctrl+P ou verifique se o navegador está bloqueando janelas suspensas.");
+      } finally {
+        setPrinting(false);
+      }
+    }, 300);
+  }, []);
 
   const EfficiencyBadge = ({ type }: { type: string }) => {
     const colors = {
@@ -103,19 +113,26 @@ const App: React.FC = () => {
           </h1>
           <p className="mt-1 text-slate-500 text-sm flex items-center gap-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 uppercase print:bg-slate-100 print:text-slate-700">
-              Logística e Moradia • Modal Trilhos
+              Logística e Moradia • Prioridade Metrô
             </span>
           </p>
         </div>
-        <div className="flex gap-2 print:hidden items-center">
+        <div className="flex gap-2 print:hidden items-center relative z-50">
            {result && (
              <button 
                onClick={handleDownloadPDF}
+               disabled={printing}
                type="button"
-               className="relative z-10 px-5 py-2.5 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
+               className={`px-5 py-2.5 text-sm font-bold text-white rounded-xl transition-all flex items-center gap-2 shadow-lg cursor-pointer ${
+                 printing ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-emerald-100'
+               }`}
              >
-               <DocumentArrowDownIcon className="h-5 w-5" />
-               Salvar PDF
+               {printing ? (
+                 <ArrowPathIcon className="h-5 w-5 animate-spin" />
+               ) : (
+                 <DocumentArrowDownIcon className="h-5 w-5" />
+               )}
+               {printing ? 'Preparando...' : 'Salvar PDF'}
              </button>
            )}
            <button 
@@ -183,7 +200,7 @@ const App: React.FC = () => {
                </div>
                <h3 className="text-xl font-bold text-slate-800">Logística sobre Trilhos</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto">
-                 "Nosso agente prioriza o uso de Metrô e CPTM para garantir que suas visitas mensais sejam rápidas e previsíveis."
+                 "O agente calcula o ponto central entre as obras e sugere bairros hubs de integração entre linhas de metrô e trem."
                </p>
              </div>
           </div>
@@ -257,7 +274,7 @@ const App: React.FC = () => {
           <section className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm print:p-8 print:rounded-3xl print:shadow-none print:border-slate-300 print:break-before-page">
              <div className="mb-10 print:mb-6">
                 <h3 className="text-2xl font-black text-slate-800 print:text-xl underline decoration-indigo-200 underline-offset-8">Agenda Mensal Consolidada</h3>
-                <p className="text-sm text-slate-400 mt-4 print:text-slate-600 italic">Todas as obras da sua planilha distribuídas estrategicamente para visita única no mês.</p>
+                <p className="text-sm text-slate-400 mt-4 print:text-slate-600 italic">Obras distribuídas estrategicamente para maximizar o uso da malha ferroviária.</p>
              </div>
 
              <div className="space-y-12 print:space-y-8">
