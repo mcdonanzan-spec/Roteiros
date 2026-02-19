@@ -12,25 +12,15 @@
     <style>
         body { 
             font-family: 'Inter', sans-serif; 
-            -webkit-tap-highlight-color: transparent; 
             margin: 0; 
             padding: 0; 
             background-color: #f8fafc;
+            color: #1e293b;
         }
         
-        button, a, input[type="button"], select {
-            cursor: pointer !important;
-            pointer-events: auto !important;
-        }
-
-        /* Garantir que o container do PDF não tenha restrições de largura durante a captura */
-        .pdf-export-mode {
-            width: 1200px !important;
-            max-width: none !important;
-        }
+        button, a { cursor: pointer !important; }
 
         @media print {
-            body { background-color: white !important; }
             .no-print { display: none !important; }
             @page { margin: 0; size: auto; }
         }
@@ -54,7 +44,7 @@
 }
 </script>
 </head>
-<body class="text-slate-900 min-h-screen">
+<body>
     <div id="root"></div>
     <script type="module" src="./index.tsx"></script>
 </body>

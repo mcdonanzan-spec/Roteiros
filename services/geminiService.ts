@@ -11,23 +11,23 @@ export async function analyzeLogistics(
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `
-    Aja como um Agente Especialista em Logística Urbana de São Paulo, focado estritamente no sistema de METRÔ e TREM (CPTM).
+    Aja como um Agente Especialista em Logística Urbana e Engenheiro de Transportes de São Paulo.
     
-    DADOS DE ENTRADA:
-    Moradia Atual: ${currentAddress}
-    Obras para Visita: ${JSON.stringify(sites)}
+    DADOS:
+    Moradia: ${currentAddress}
+    Obras: ${JSON.stringify(sites)}
 
-    OBJETIVO ESTRATÉGICO:
-    1. PRIORIDADE METRÔ: Todas as rotas e cálculos devem priorizar o transporte sobre trilhos. 
-    2. AGENDA MENSAL: Distribua as ${sites.length} obras ao longo de 4 semanas (20-22 dias úteis).
-    3. VISITA ÚNICA: Cada obra deve ser visitada 1 vez por mês.
-    4. CLUSTERIZAÇÃO POR LINHA: Agrupe visitas que utilizem a mesma linha (ex: Linha 4-Amarela, Linha 9-Esmeralda) para otimizar o tempo de baldeação.
-    5. TEMPOS: Inclua o tempo de caminhada até a estação e da estação até a obra. Se a obra for distante do metrô, marque como 'Turno Integral'.
+    OBJETIVO:
+    Crie um roteirizador completo. Para cada obra, identifique a melhor estação de Metrô/Trem e o tempo de caminhada.
+    
+    REGRAS DE ROTEIRIZAÇÃO:
+    1. METRÔ: Identifique a linha principal (ex: L4 Amarela, L2 Verde, L9 Esmeralda).
+    2. ÚLTIMA MILHA: Calcule o tempo de caminhada da estação mais próxima até a obra.
+    3. ÔNIBUS: Se a obra for > 15min de caminhada do metrô, sugira conexão com ônibus/terminal.
+    4. DISTRIBUIÇÃO: Distribua as obras em 4 semanas.
 
-    NOMES DAS OBRAS: Use os nomes reais da planilha (ex: "Rio São Francisco", "Rio Madeira") como o destino principal.
-
-    RETORNO:
-    Preencha obrigatoriamente a 'monthlyAgenda' com TODAS as obras fornecidas.
+    ESTRUTURA DE RESPOSTA (JSON):
+    - monthlyAgenda: Cada dia deve conter um array de objetos { siteName, metroLine, walkingMinutes, busInfo, isFullTurn }.
     `,
     config: {
       responseMimeType: "application/json",
@@ -82,7 +82,20 @@ export async function analyzeLogistics(
               type: Type.OBJECT,
               properties: {
                 day: { type: Type.STRING },
-                visits: { type: Type.ARRAY, items: { type: Type.STRING } },
+                visits: { 
+                  type: Type.ARRAY, 
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      siteName: { type: Type.STRING },
+                      metroLine: { type: Type.STRING },
+                      walkingMinutes: { type: Type.NUMBER },
+                      busInfo: { type: Type.STRING },
+                      isFullTurn: { type: Type.BOOLEAN }
+                    },
+                    required: ["siteName", "isFullTurn"]
+                  }
+                },
                 estimatedTravelTime: { type: Type.STRING },
                 totalTime: { type: Type.STRING }
               },
@@ -98,11 +111,61 @@ export async function analyzeLogistics(
                 schedule: { 
                   type: Type.OBJECT,
                   properties: {
-                    Segunda: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Terça: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Quarta: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Quinta: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Sexta: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    Segunda: { type: Type.ARRAY, items: { 
+                      type: Type.OBJECT,
+                      properties: {
+                        siteName: { type: Type.STRING },
+                        metroLine: { type: Type.STRING },
+                        walkingMinutes: { type: Type.NUMBER },
+                        busInfo: { type: Type.STRING },
+                        isFullTurn: { type: Type.BOOLEAN }
+                      },
+                      required: ["siteName", "isFullTurn"]
+                    } },
+                    Terça: { type: Type.ARRAY, items: { 
+                      type: Type.OBJECT,
+                      properties: {
+                        siteName: { type: Type.STRING },
+                        metroLine: { type: Type.STRING },
+                        walkingMinutes: { type: Type.NUMBER },
+                        busInfo: { type: Type.STRING },
+                        isFullTurn: { type: Type.BOOLEAN }
+                      },
+                      required: ["siteName", "isFullTurn"]
+                    } },
+                    Quarta: { type: Type.ARRAY, items: { 
+                      type: Type.OBJECT,
+                      properties: {
+                        siteName: { type: Type.STRING },
+                        metroLine: { type: Type.STRING },
+                        walkingMinutes: { type: Type.NUMBER },
+                        busInfo: { type: Type.STRING },
+                        isFullTurn: { type: Type.BOOLEAN }
+                      },
+                      required: ["siteName", "isFullTurn"]
+                    } },
+                    Quinta: { type: Type.ARRAY, items: { 
+                      type: Type.OBJECT,
+                      properties: {
+                        siteName: { type: Type.STRING },
+                        metroLine: { type: Type.STRING },
+                        walkingMinutes: { type: Type.NUMBER },
+                        busInfo: { type: Type.STRING },
+                        isFullTurn: { type: Type.BOOLEAN }
+                      },
+                      required: ["siteName", "isFullTurn"]
+                    } },
+                    Sexta: { type: Type.ARRAY, items: { 
+                      type: Type.OBJECT,
+                      properties: {
+                        siteName: { type: Type.STRING },
+                        metroLine: { type: Type.STRING },
+                        walkingMinutes: { type: Type.NUMBER },
+                        busInfo: { type: Type.STRING },
+                        isFullTurn: { type: Type.BOOLEAN }
+                      },
+                      required: ["siteName", "isFullTurn"]
+                    } }
                   },
                   required: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]
                 }

@@ -9,6 +9,14 @@ export interface ConstructionSite {
   cep: string;
 }
 
+export interface VisitDetail {
+  siteName: string;
+  metroLine?: string;
+  busInfo?: string;
+  walkingMinutes?: number;
+  isFullTurn: boolean;
+}
+
 export interface Cluster {
   name: string;
   sites: string[];
@@ -17,14 +25,20 @@ export interface Cluster {
 
 export interface DayRoute {
   day: string;
-  visits: string[];
+  visits: VisitDetail[];
   estimatedTravelTime: string;
   totalTime: string;
 }
 
 export interface MonthAgenda {
   week: number;
-  schedule: { [day: string]: string[] };
+  schedule: { 
+    Segunda: VisitDetail[];
+    Terça: VisitDetail[];
+    Quarta: VisitDetail[];
+    Quinta: VisitDetail[];
+    Sexta: VisitDetail[];
+  };
 }
 
 export interface AnalysisResult {
