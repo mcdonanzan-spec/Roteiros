@@ -20,9 +20,25 @@
         
         button, a { cursor: pointer !important; }
 
+        /* Estilos para o modo de exportação de PDF */
+        .pdf-export-mode {
+            background-color: white !important;
+            padding: 20px !important;
+            width: 1000px !important; /* Largura ideal para A4 */
+        }
+        
+        .pdf-export-mode shadow-sm, 
+        .pdf-export-mode shadow-lg, 
+        .pdf-export-mode shadow-xl, 
+        .pdf-export-mode shadow-2xl {
+            box-shadow: none !important;
+            border: 1px solid #e2e8f0 !important;
+        }
+
         @media print {
             .no-print { display: none !important; }
-            @page { margin: 0; size: auto; }
+            .page-break { page-break-before: always; }
+            body { background: white; }
         }
     </style>
 <script type="importmap">
