@@ -1,6 +1,6 @@
 
 import React, { useState, useRef } from 'react';
-import { ConstructionSite, AnalysisResult, VisitDetail } from './types';
+import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda } from './types';
 import { analyzeLogistics } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
 import { jsPDF } from 'jspdf';
@@ -14,10 +14,11 @@ import {
   CheckCircleIcon,
   DocumentArrowDownIcon,
   MapIcon,
-  TruckIcon
+  TruckIcon,
+  CodeBracketIcon
 } from '@heroicons/react/24/outline';
 
-const VisitCard: React.FC<{ visit: VisitDetail }> = ({ visit }) => {
+const VisitCard: React.FC<{ visit: VisitDetail; isGrouped?: boolean }> = ({ visit, isGrouped }) => {
   const getMetroStyle = (line: string = '') => {
     const l = line.toLowerCase();
     if (l.includes('azul') || l.includes('l1')) return 'bg-blue-600 text-white';
@@ -36,7 +37,7 @@ const VisitCard: React.FC<{ visit: VisitDetail }> = ({ visit }) => {
   };
 
   return (
-    <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm transition-all group overflow-hidden">
+    <div className={`p-4 bg-white rounded-2xl border transition-all group overflow-hidden ${isGrouped ? 'border-indigo-200 border-l-4 border-l-indigo-500' : 'border-slate-200 shadow-sm'}`}>
       <div className="flex justify-between items-start mb-2 gap-2">
         <span className="text-[11px] font-black text-slate-900 leading-tight group-hover:text-indigo-600 transition-colors uppercase truncate">
           {visit.siteName}
@@ -120,25 +121,82 @@ const App: React.FC = () => {
     }
   };
 
+  const generateMarkdown = (res: AnalysisResult) => {
+    let md = `# 🏗️ Planejamento Logístico SP - Expert Router\n\n`;
+    md += `> Gerado em: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n\n`;
+    
+    md += `## 🩺 Diagnóstico Estratégico\n\n`;
+    md += `"${res.diagnosis}"\n\n`;
+    
+    md += `### 📊 Impacto Mensal\n`;
+    md += `- **Economia Mensal:** ${res.housingRecommendation.comparison.monthlySavings}\n`;
+    md += `- **Eficiência Atual:** ${res.currentEvaluation.efficiency}\n\n`;
+
+    md += `## 📅 Agenda Mensal Roteirizada\n\n`;
+    
+    res.monthlyAgenda.forEach((week) => {
+      md += `### Semana ${week.week}\n\n`;
+      md += `| Dia | Visitas | Detalhes de Transporte |\n`;
+      md += `| :--- | :--- | :--- |\n`;
+      
+      const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'] as const;
+      days.forEach(day => {
+        const visits = week.schedule[day];
+        if (visits && visits.length > 0) {
+          const names = visits.map(v => `**${v.siteName}**${v.isFullTurn ? ' (Integral)' : ''}`).join('<br>');
+          const details = visits.map(v => {
+            let info = `${v.metroLine || 'N/A'}`;
+            if (v.walkingMinutes) info += ` 🚶 ${v.walkingMinutes}min`;
+            if (v.busInfo) info += ` 🚌 ${v.busInfo}`;
+            return info;
+          }).join('<br>');
+          md += `| ${day} | ${names} | ${details} |\n`;
+        } else {
+          md += `| ${day} | _Livre_ | - |\n`;
+        }
+      });
+      md += `\n`;
+    });
+
+    md += `## 🏠 Recomendação de Moradia (Hub Residencial)\n\n`;
+    md += `**Bairros Sugeridos:** ${res.housingRecommendation.topNeighborhoods.join(', ')}\n\n`;
+    md += `> ${res.housingRecommendation.centroidDescription}\n\n`;
+    md += `### Comparativo de Tempo\n`;
+    md += `- **Tempo Médio Sugerido:** ${res.housingRecommendation.comparison.suggestedAvgTime}\n`;
+    md += `- **Tempo Médio Atual:** ${res.housingRecommendation.comparison.currentAvgTime}\n\n`;
+
+    md += `## 🚀 Resumo de Performance\n\n`;
+    md += `${res.timeSavingsSummary}\n\n`;
+    
+    md += `---\n_Gerado por SP Route Optimizer_`;
+    return md;
+  };
+
+  const handleDownloadMarkdown = () => {
+    if (!result) return;
+    const md = generateMarkdown(result);
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `README_LOGISTICA_${new Date().getTime()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleDownloadPDF = async () => {
     if (!reportRef.current) return;
     setExporting(true);
-    
-    // Pequeno atraso para garantir que qualquer animação de hover tenha terminado
     await new Promise(r => setTimeout(r, 100));
-
     try {
       const element = reportRef.current;
       const originalWidth = element.style.width;
       const originalPadding = element.style.padding;
-      
-      // Preparação do elemento para captura em formato A4
       element.classList.add('pdf-export-mode');
       element.style.width = '1000px'; 
       element.style.padding = '40px';
-
       const canvas = await html2canvas(element, {
-        scale: 3, // Aumentado para 3x para nitidez total de texto pequeno
+        scale: 3,
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
@@ -146,41 +204,30 @@ const App: React.FC = () => {
         height: element.scrollHeight,
         windowWidth: 1000
       });
-
-      // Restaurar estilos originais
       element.classList.remove('pdf-export-mode');
       element.style.width = originalWidth;
       element.style.padding = originalPadding;
-
       const imgData = canvas.toDataURL('image/jpeg', 0.98);
       const pdf = new jsPDF('p', 'mm', 'a4');
-      
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
-      
       const imgWidth = pdfWidth;
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-      
       let heightLeft = imgHeight;
       let position = 0;
-
-      // Adiciona a primeira página
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
       heightLeft -= pdfHeight;
-
-      // Adiciona as páginas subsequentes se necessário
       while (heightLeft > 0) {
         position = heightLeft - imgHeight;
         pdf.addPage();
         pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
         heightLeft -= pdfHeight;
       }
-
       const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
       pdf.save(`Plano_Estrategico_SP_${dateStr}.pdf`);
     } catch (err) {
       console.error(err);
-      alert("Erro ao processar o arquivo PDF de alta definição.");
+      alert("Erro ao processar o arquivo PDF.");
     } finally {
       setExporting(false);
     }
@@ -198,18 +245,27 @@ const App: React.FC = () => {
             <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Expert Logistics Agent</p>
           </div>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
            {result && (
-             <button 
-               onClick={handleDownloadPDF}
-               disabled={exporting}
-               className={`px-6 py-3 text-sm font-bold text-white rounded-xl transition-all flex items-center gap-2 shadow-xl ${
-                 exporting ? 'bg-slate-400' : 'bg-slate-900 hover:bg-black active:scale-95'
-               }`}
-             >
-               {exporting ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : <DocumentArrowDownIcon className="h-5 w-5" />}
-               {exporting ? 'Exportando HD...' : 'PDF Roteirizado HD'}
-             </button>
+             <>
+               <button 
+                 onClick={handleDownloadMarkdown}
+                 className="px-6 py-3 text-sm font-bold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm"
+               >
+                 <CodeBracketIcon className="h-5 w-5" />
+                 Salvar no GitHub (Markdown)
+               </button>
+               <button 
+                 onClick={handleDownloadPDF}
+                 disabled={exporting}
+                 className={`px-6 py-3 text-sm font-bold text-white rounded-xl transition-all flex items-center gap-2 shadow-xl ${
+                   exporting ? 'bg-slate-400' : 'bg-slate-900 hover:bg-black active:scale-95'
+                 }`}
+               >
+                 {exporting ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : <DocumentArrowDownIcon className="h-5 w-5" />}
+                 {exporting ? 'Exportando HD...' : 'PDF Roteirizado HD'}
+               </button>
+             </>
            )}
            <button onClick={() => setResult(null)} className="px-5 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50">
              {result ? 'Novo Cálculo' : 'Limpar'}
@@ -220,6 +276,11 @@ const App: React.FC = () => {
       {!result && (
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-500">
           <div className="space-y-6">
+            {error && (
+              <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-sm font-medium">
+                {error}
+              </div>
+            )}
             <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
               <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
                 <HomeIcon className="h-4 w-4 text-indigo-500" />
@@ -255,7 +316,7 @@ const App: React.FC = () => {
               }`}
             >
               {loading ? <ArrowPathIcon className="h-6 w-6 animate-spin" /> : <CheckCircleIcon className="h-6 w-6" />}
-              {loading ? 'Calculando Malha Metroviária...' : 'Gerar Planejamento Mensal'}
+              {loading ? 'Agrupando por Proximidade...' : 'Gerar Planejamento Mensal'}
             </button>
           </div>
 
@@ -264,9 +325,9 @@ const App: React.FC = () => {
                <div className="bg-indigo-50 p-6 rounded-full inline-block">
                  <MapIcon className="h-12 w-12 text-indigo-600" />
                </div>
-               <h3 className="text-2xl font-black text-slate-800">Cálculo de Last-Mile</h3>
+               <h3 className="text-2xl font-black text-slate-800">Agrupamento Inteligente</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
-                 "O agente cruza as coordenadas das obras com as saídas de Metrô/Trem para calcular o tempo real de caminhada e sugerir conexões de ônibus onde necessário."
+                 O sistema detecta obras vizinhas e as coloca no mesmo dia, reduzindo drasticamente seu tempo de trânsito e fadiga entre visitas.
                </p>
              </div>
           </div>
@@ -278,7 +339,7 @@ const App: React.FC = () => {
           {/* Diagnostic Summary */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2">
-               <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4">Diagnóstico Logístico de São Paulo</h2>
+               <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4">Estratégia Logística de São Paulo</h2>
                <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
             </div>
             <div className="bg-indigo-600 p-8 rounded-3xl shadow-lg shadow-indigo-100 text-white flex flex-col justify-center text-center">
@@ -303,7 +364,7 @@ const App: React.FC = () => {
              <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda Mensal Roteirizada</h3>
-                  <p className="text-slate-500 mt-2 font-medium">Fluxo otimizado para reduzir integrações e maximizar o uso da malha metroferroviária.</p>
+                  <p className="text-slate-500 mt-2 font-medium">As visitas foram agrupadas para priorizar obras no mesmo endereço ou vizinhança.</p>
                 </div>
                 <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100">
                    <div className="flex flex-col items-center border-r border-slate-200 pr-6">
@@ -328,18 +389,22 @@ const App: React.FC = () => {
                       {['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].map((dayName) => {
                         const dayKey = dayName as keyof typeof week.schedule;
                         const visits = week.schedule[dayKey] || [];
+                        const isMultiVisit = visits.length > 1;
                         return (
                           <div key={dayName} className="space-y-4">
                             <span className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-[0.3em] px-2 text-center md:text-left">{dayName}</span>
-                            <div className="space-y-3 min-h-[140px] bg-slate-50/70 p-3 rounded-3xl border border-dashed border-slate-200">
+                            <div className={`space-y-3 min-h-[140px] p-3 rounded-3xl border border-dashed transition-colors ${isMultiVisit ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50/70 border-slate-200'}`}>
                               {visits.length > 0 ? visits.map((visit, sIdx) => (
-                                <VisitCard key={sIdx} visit={visit} />
+                                <VisitCard key={sIdx} visit={visit} isGrouped={isMultiVisit} />
                               )) : (
                                 <div className="h-full flex items-center justify-center py-10 opacity-20 grayscale">
                                    <ArrowPathIcon className="h-8 w-8 text-slate-300" />
                                 </div>
                               )}
                             </div>
+                            {isMultiVisit && (
+                              <span className="block text-[8px] font-black text-indigo-500 uppercase text-center tracking-widest">Visitas Agrupadas</span>
+                            )}
                           </div>
                         );
                       })}
@@ -355,7 +420,7 @@ const App: React.FC = () => {
              <div className="flex-1 space-y-8 relative z-10">
                 <div>
                    <h3 className="text-4xl font-black mb-3 tracking-tight">Estratégia de Hub Residencial</h3>
-                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">Localizações com maior conectividade modal para sua carteira atual:</p>
+                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">Localizações ideais para sua atual carteira técnica:</p>
                 </div>
                 <div className="flex flex-wrap gap-4">
                    {result.housingRecommendation.topNeighborhoods.map(b => (

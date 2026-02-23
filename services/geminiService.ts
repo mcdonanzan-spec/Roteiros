@@ -17,14 +17,16 @@ export async function analyzeLogistics(
     Moradia: ${currentAddress}
     Obras: ${JSON.stringify(sites)}
 
-    OBJETIVO:
-    Crie um roteirizador completo. Para cada obra, identifique a melhor estação de Metrô/Trem e o tempo de caminhada.
+    DIRETRIZ DE AGRUPAMENTO (CRÍTICO):
+    1. MESMO ENDEREÇO/PROXIMIDADE: Se duas ou mais obras possuírem o mesmo endereço, CEP similar ou estiverem na mesma rua/vizinhança imediata, você DEVE agendá-las para o MESMO DIA. 
+    2. EFICIÊNCIA DE DESLOCAMENTO: O objetivo é minimizar o tempo de transporte. É preferível visitar 3 obras próximas em um único dia do que espalhá-las pela semana.
+    3. ROTEIRIZAÇÃO: Para cada obra, identifique a melhor estação de Metrô/Trem e o tempo de caminhada.
     
-    REGRAS DE ROTEIRIZAÇÃO:
-    1. METRÔ: Identifique a linha principal (ex: L4 Amarela, L2 Verde, L9 Esmeralda).
-    2. ÚLTIMA MILHA: Calcule o tempo de caminhada da estação mais próxima até a obra.
-    3. ÔNIBUS: Se a obra for > 15min de caminhada do metrô, sugira conexão com ônibus/terminal.
-    4. DISTRIBUIÇÃO: Distribua as obras em 4 semanas.
+    REGRAS TÉCNICAS:
+    - METRÔ: Identifique a linha principal (ex: L4 Amarela, L2 Verde, L9 Esmeralda).
+    - ÚLTIMA MILHA: Calcule o tempo de caminhada da estação mais próxima até a obra.
+    - ÔNIBUS: Sugira ônibus apenas se a caminhada for > 15min.
+    - DISTRIBUIÇÃO: Distribua o volume total de visitas ao longo de 4 semanas, mantendo os agrupamentos geográficos.
 
     ESTRUTURA DE RESPOSTA (JSON):
     - monthlyAgenda: Cada dia deve conter um array de objetos { siteName, metroLine, walkingMinutes, busInfo, isFullTurn }.
