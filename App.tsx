@@ -15,10 +15,17 @@ import {
   DocumentArrowDownIcon,
   MapIcon,
   TruckIcon,
-  CodeBracketIcon
+  CodeBracketIcon,
+  BuildingOfficeIcon
 } from '@heroicons/react/24/outline';
 
-const VisitCard: React.FC<{ visit: VisitDetail; isGrouped?: boolean }> = ({ visit, isGrouped }) => {
+interface VisitCardProps {
+  visit: VisitDetail;
+  isGrouped?: boolean;
+  onEdit: () => void;
+}
+
+const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
   const getMetroStyle = (line: string = '') => {
     const l = line.toLowerCase();
     if (l.includes('azul') || l.includes('l1')) return 'bg-blue-600 text-white';
@@ -36,15 +43,28 @@ const VisitCard: React.FC<{ visit: VisitDetail; isGrouped?: boolean }> = ({ visi
     return 'bg-slate-200 text-slate-600';
   };
 
+  const isWalkingOverLimit = visit.walkingMinutes !== undefined && visit.walkingMinutes > 15;
+
   return (
-    <div className={`p-4 bg-white rounded-2xl border transition-all group overflow-hidden ${isGrouped ? 'border-indigo-200 border-l-4 border-l-indigo-500' : 'border-slate-200 shadow-sm'}`}>
-      <div className="flex justify-between items-start mb-2 gap-2">
+    <div 
+      onClick={onEdit}
+      className={`p-4 bg-white rounded-2xl border transition-all group overflow-hidden cursor-pointer hover:border-indigo-400 hover:shadow-md hover:scale-[1.01] relative ${
+        isGrouped ? 'border-indigo-200 border-l-4 border-l-indigo-500' : 'border-slate-200 shadow-sm'
+      } ${isWalkingOverLimit ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+    >
+      <div className="flex justify-between items-start mb-2 gap-2 pr-4">
         <span className="text-[11px] font-black text-slate-900 leading-tight group-hover:text-indigo-600 transition-colors uppercase truncate">
           {visit.siteName}
         </span>
         {visit.isFullTurn && (
           <span className="shrink-0 px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase border border-rose-100">Integral</span>
         )}
+      </div>
+
+      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all text-slate-400 hover:text-indigo-600">
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+        </svg>
       </div>
       
       {visit.metroLine && (
@@ -55,9 +75,14 @@ const VisitCard: React.FC<{ visit: VisitDetail; isGrouped?: boolean }> = ({ visi
 
       <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
         {visit.walkingMinutes !== undefined && (
-          <div className="flex items-center gap-1.5 text-slate-600">
+          <div className="flex items-center gap-1.5 text-slate-600 flex-wrap">
             <ClockIcon className="h-3 w-3 text-slate-400" />
             <span className="text-[10px] font-bold">Caminhada: <span className="text-slate-900">{visit.walkingMinutes} min</span></span>
+            {isWalkingOverLimit && (
+              <span className="px-1 py-0.5 bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black rounded uppercase animate-pulse">
+                &gt;15 min!
+              </span>
+            )}
           </div>
         )}
         {visit.busInfo && (
@@ -78,6 +103,101 @@ const App: React.FC = () => {
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Estados para edição interativa de visitas
+  const [editingVisit, setEditingVisit] = useState<{
+    weekIdx: number;
+    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta';
+    visitIdx: number;
+    visit: VisitDetail;
+  } | null>(null);
+  const [isNewVisit, setIsNewVisit] = useState(false);
+
+  const handleOpenEdit = (
+    weekIdx: number, 
+    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta', 
+    visitIdx: number, 
+    visit: VisitDetail
+  ) => {
+    setIsNewVisit(false);
+    setEditingVisit({
+      weekIdx,
+      dayName,
+      visitIdx,
+      visit: { ...visit }
+    });
+  };
+
+  const handleOpenAdd = (
+    weekIdx: number,
+    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta'
+  ) => {
+    setIsNewVisit(true);
+    setEditingVisit({
+      weekIdx,
+      dayName,
+      visitIdx: -1,
+      visit: {
+        siteName: '',
+        metroLine: '',
+        busInfo: '',
+        walkingMinutes: 5,
+        isFullTurn: false
+      }
+    });
+  };
+
+  const handleSaveVisit = () => {
+    if (!result || !editingVisit) return;
+    const { weekIdx, dayName, visitIdx, visit } = editingVisit;
+
+    if (!visit.siteName.trim()) {
+      alert("Por favor, digite o nome da obra.");
+      return;
+    }
+
+    const updatedAgenda = [...result.monthlyAgenda];
+    const targetWeek = { ...updatedAgenda[weekIdx] };
+    const targetSchedule = { ...targetWeek.schedule };
+    const targetDayVisits = [...(targetSchedule[dayName] || [])];
+
+    if (isNewVisit) {
+      targetDayVisits.push(visit);
+    } else {
+      targetDayVisits[visitIdx] = visit;
+    }
+
+    targetSchedule[dayName] = targetDayVisits;
+    targetWeek.schedule = targetSchedule;
+    updatedAgenda[weekIdx] = targetWeek;
+
+    setResult({
+      ...result,
+      monthlyAgenda: updatedAgenda
+    });
+    setEditingVisit(null);
+  };
+
+  const handleDeleteVisit = () => {
+    if (!result || !editingVisit) return;
+    const { weekIdx, dayName, visitIdx } = editingVisit;
+
+    const updatedAgenda = [...result.monthlyAgenda];
+    const targetWeek = { ...updatedAgenda[weekIdx] };
+    const targetSchedule = { ...targetWeek.schedule };
+    const targetDayVisits = [...(targetSchedule[dayName] || [])];
+
+    targetDayVisits.splice(visitIdx, 1);
+    targetSchedule[dayName] = targetDayVisits;
+    targetWeek.schedule = targetSchedule;
+    updatedAgenda[weekIdx] = targetWeek;
+
+    setResult({
+      ...result,
+      monthlyAgenda: updatedAgenda
+    });
+    setEditingVisit(null);
+  };
   
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -128,11 +248,15 @@ const App: React.FC = () => {
     md += `## 🩺 Diagnóstico Estratégico\n\n`;
     md += `"${res.diagnosis}"\n\n`;
     
+    md += `### 🏢 Contexto de Ciclo de Trabalho\n`;
+    md += `- **Mês Atual:** Focado em Visitas Técnicas (Roteirizado abaixo).\n`;
+    md += `- **Próximos 2 Meses:** Atividade fixa no escritório (Peixoto Gomide).\n\n`;
+
     md += `### 📊 Impacto Mensal\n`;
     md += `- **Economia Mensal:** ${res.housingRecommendation.comparison.monthlySavings}\n`;
     md += `- **Eficiência Atual:** ${res.currentEvaluation.efficiency}\n\n`;
 
-    md += `## 📅 Agenda Mensal Roteirizada\n\n`;
+    md += `## 📅 Agenda Mensal Roteirizada (Mês de Visitas)\n\n`;
     
     res.monthlyAgenda.forEach((week) => {
       md += `### Semana ${week.week}\n\n`;
@@ -152,13 +276,13 @@ const App: React.FC = () => {
           }).join('<br>');
           md += `| ${day} | ${names} | ${details} |\n`;
         } else {
-          md += `| ${day} | _Livre_ | - |\n`;
+          md += `| ${day} | _Escritório (Peixoto Gomide)_ | - |\n`;
         }
       });
       md += `\n`;
     });
 
-    md += `## 🏠 Recomendação de Moradia (Hub Residencial)\n\n`;
+    md += `## 🏠 Recomendação de Moradia (Hub Estratégico)\n\n`;
     md += `**Bairros Sugeridos:** ${res.housingRecommendation.topNeighborhoods.join(', ')}\n\n`;
     md += `> ${res.housingRecommendation.centroidDescription}\n\n`;
     md += `### Comparativo de Tempo\n`;
@@ -179,7 +303,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `README_LOGISTICA_${new Date().getTime()}.md`;
+    a.download = `README_LOGISTICA_CICLO_${new Date().getTime()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -250,10 +374,10 @@ const App: React.FC = () => {
              <>
                <button 
                  onClick={handleDownloadMarkdown}
-                 className="px-6 py-3 text-sm font-bold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm"
+                 className="px-6 py-3 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-2 shadow-sm"
                >
                  <CodeBracketIcon className="h-5 w-5" />
-                 Salvar no GitHub (Markdown)
+                 GitHub Markdown
                </button>
                <button 
                  onClick={handleDownloadPDF}
@@ -296,6 +420,25 @@ const App: React.FC = () => {
             </section>
 
             <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+               <div className="flex items-center justify-between mb-6">
+                 <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                   <BuildingOfficeIcon className="h-4 w-4 text-emerald-500" />
+                   Hub de Escritório (Fixo)
+                 </h2>
+                 <span className="text-[10px] font-black bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md uppercase">Peixoto Gomide</span>
+               </div>
+               <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center gap-3">
+                 <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                   <MapPinIcon className="h-5 w-5 text-emerald-500" />
+                 </div>
+                 <div>
+                   <p className="text-xs font-bold text-slate-900 leading-none mb-1">Jardim Paulista / Bela Vista</p>
+                   <p className="text-[10px] text-slate-400 font-medium italic">Referência: Próximo ao Metrô Trianon-Masp</p>
+                 </div>
+               </div>
+            </section>
+
+            <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
               <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
                 <TableCellsIcon className="h-4 w-4 text-indigo-500" />
                 Dados da Planilha (Colunas A a G)
@@ -304,7 +447,7 @@ const App: React.FC = () => {
                 value={rawInput}
                 onChange={(e) => setRawInput(e.target.value)}
                 placeholder="Cole aqui os dados da sua planilha de obras..."
-                className="w-full h-64 px-5 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs bg-slate-50 leading-relaxed"
+                className="w-full h-48 px-5 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs bg-slate-50 leading-relaxed"
               />
             </section>
 
@@ -316,18 +459,19 @@ const App: React.FC = () => {
               }`}
             >
               {loading ? <ArrowPathIcon className="h-6 w-6 animate-spin" /> : <CheckCircleIcon className="h-6 w-6" />}
-              {loading ? 'Agrupando por Proximidade...' : 'Gerar Planejamento Mensal'}
+              {loading ? 'Calculando Ciclo 1:2...' : 'Otimizar Ciclo Logístico'}
             </button>
           </div>
 
-          <div className="hidden lg:flex flex-col justify-center items-center p-12 bg-white rounded-[40px] border border-slate-200 border-dashed">
+          <div className="hidden lg:flex flex-col justify-center items-center p-12 bg-white rounded-[40px] border border-slate-200 border-dashed relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full -mr-16 -mt-16"></div>
              <div className="text-center space-y-6">
                <div className="bg-indigo-50 p-6 rounded-full inline-block">
                  <MapIcon className="h-12 w-12 text-indigo-600" />
                </div>
-               <h3 className="text-2xl font-black text-slate-800">Agrupamento Inteligente</h3>
+               <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub Misto</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
-                 O sistema detecta obras vizinhas e as coloca no mesmo dia, reduzindo drasticamente seu tempo de trânsito e fadiga entre visitas.
+                 O roteirizador agora considera o escritório na Peixoto Gomide como âncora principal para equilibrar sua moradia ideal entre obras e escritório.
                </p>
              </div>
           </div>
@@ -339,7 +483,7 @@ const App: React.FC = () => {
           {/* Diagnostic Summary */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2">
-               <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4">Estratégia Logística de São Paulo</h2>
+               <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4">Estratégia de Ciclo Logístico (1/2)</h2>
                <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
             </div>
             <div className="bg-indigo-600 p-8 rounded-3xl shadow-lg shadow-indigo-100 text-white flex flex-col justify-center text-center">
@@ -363,17 +507,17 @@ const App: React.FC = () => {
           <section className="bg-white p-10 rounded-[50px] border border-slate-100 shadow-sm overflow-hidden">
              <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
-                  <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda Mensal Roteirizada</h3>
-                  <p className="text-slate-500 mt-2 font-medium">As visitas foram agrupadas para priorizar obras no mesmo endereço ou vizinhança.</p>
+                  <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda: Mês de Auditoria (Visitas)</h3>
+                  <p className="text-slate-500 mt-2 font-medium italic">"Os dias livres indicam retorno obrigatório ao escritório fixo na Peixoto Gomide."</p>
                 </div>
                 <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100">
                    <div className="flex flex-col items-center border-r border-slate-200 pr-6">
-                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Caminhada</span>
-                     <span className="text-xs font-bold text-slate-700 uppercase">Otimizada</span>
+                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Office Hub</span>
+                     <span className="text-xs font-bold text-emerald-600 uppercase">Peixoto</span>
                    </div>
                    <div className="flex flex-col items-center">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Metro</span>
-                     <span className="text-xs font-bold text-slate-700 uppercase">Hub Prioritário</span>
+                     <span className="text-xs font-bold text-slate-700 uppercase">L2 / L4</span>
                    </div>
                 </div>
              </div>
@@ -393,14 +537,31 @@ const App: React.FC = () => {
                         return (
                           <div key={dayName} className="space-y-4">
                             <span className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-[0.3em] px-2 text-center md:text-left">{dayName}</span>
-                            <div className={`space-y-3 min-h-[140px] p-3 rounded-3xl border border-dashed transition-colors ${isMultiVisit ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50/70 border-slate-200'}`}>
-                              {visits.length > 0 ? visits.map((visit, sIdx) => (
-                                <VisitCard key={sIdx} visit={visit} isGrouped={isMultiVisit} />
-                              )) : (
-                                <div className="h-full flex items-center justify-center py-10 opacity-20 grayscale">
-                                   <ArrowPathIcon className="h-8 w-8 text-slate-300" />
+                            <div className={`space-y-3 min-h-[140px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${isMultiVisit ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50/70 border-slate-200'}`}>
+                              {visits.length > 0 ? (
+                                <div className="space-y-3">
+                                  {visits.map((visit, sIdx) => (
+                                    <VisitCard 
+                                      key={sIdx} 
+                                      visit={visit} 
+                                      isGrouped={isMultiVisit} 
+                                      onEdit={() => handleOpenEdit(wIdx, dayKey, sIdx, visit)}
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="h-full flex flex-col items-center justify-center py-8 opacity-30 group-hover/day:opacity-10 transition-opacity">
+                                   <BuildingOfficeIcon className="h-6 w-6 text-slate-400 mb-1" />
+                                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center">Escritório</span>
                                 </div>
                               )}
+                              
+                              <button
+                                onClick={() => handleOpenAdd(wIdx, dayKey)}
+                                className="w-full py-1.5 px-2 bg-indigo-50 hover:bg-emerald-50 text-indigo-700 hover:text-emerald-700 rounded-xl text-[9px] font-black border border-indigo-100 border-dashed transition-all opacity-0 group-hover/day:opacity-100 focus:opacity-100 flex items-center justify-center gap-1 active:scale-95"
+                              >
+                                <span>+ Adicionar Obra</span>
+                              </button>
                             </div>
                             {isMultiVisit && (
                               <span className="block text-[8px] font-black text-indigo-500 uppercase text-center tracking-widest">Visitas Agrupadas</span>
@@ -416,11 +577,11 @@ const App: React.FC = () => {
 
           {/* Housing Strategy Insight */}
           <section className="bg-[#0f172a] rounded-[50px] p-12 text-white flex flex-col lg:flex-row gap-12 items-center relative overflow-hidden shadow-2xl">
-             <div className="absolute bottom-0 right-0 w-80 h-80 bg-indigo-500/10 blur-[120px] rounded-full"></div>
+             <div className="absolute bottom-0 right-0 w-80 h-80 bg-emerald-500/10 blur-[120px] rounded-full"></div>
              <div className="flex-1 space-y-8 relative z-10">
                 <div>
-                   <h3 className="text-4xl font-black mb-3 tracking-tight">Estratégia de Hub Residencial</h3>
-                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">Localizações ideais para sua atual carteira técnica:</p>
+                   <h3 className="text-4xl font-black mb-3 tracking-tight">Estratégia de Hub Misto</h3>
+                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">Localizações ideais equilibrando Peixoto Gomide + Obras:</p>
                 </div>
                 <div className="flex flex-wrap gap-4">
                    {result.housingRecommendation.topNeighborhoods.map(b => (
@@ -441,8 +602,8 @@ const App: React.FC = () => {
                     <div className="bg-emerald-100 text-emerald-700 px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200">Otimizado</div>
                   </div>
                   <div className="pt-8 border-t border-slate-100 space-y-3">
-                     <p className="text-xs text-slate-600 font-bold leading-relaxed">
-                       "A localização estratégica sugerida reduz a dependência de baldeações críticas em terminais saturados (Sé/Luz)."
+                     <p className="text-xs text-slate-600 font-bold leading-relaxed italic">
+                       "O bairro Paraíso/Ana Rosa mantém você a menos de 10 min da Peixoto Gomide e conectado a todos os eixos de obras."
                      </p>
                   </div>
                 </div>
@@ -451,22 +612,160 @@ const App: React.FC = () => {
 
           {/* Performance Summary */}
           <section className="bg-emerald-50 border-2 border-emerald-100 p-12 rounded-[50px] text-center max-w-5xl mx-auto shadow-sm">
-             <h3 className="text-[10px] font-black text-emerald-600 mb-6 uppercase tracking-[0.4em]">Resumo de Performance Operacional</h3>
+             <h3 className="text-[10px] font-black text-emerald-600 mb-6 uppercase tracking-[0.4em]">Resumo de Performance Operacional (Ciclo Trimestral)</h3>
              <p className="text-emerald-900 text-xl font-bold leading-relaxed max-w-3xl mx-auto italic">
                {result.timeSavingsSummary}
              </p>
           </section>
 
           <footer className="mt-10 py-12 text-center border-t border-slate-200">
-             <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em] italic">Relatório Logístico de Engenharia • SP Expert Router • {new Date().toLocaleDateString()}</p>
+             <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em] italic">Relatório Logístico • Hub Peixoto Gomide • {new Date().toLocaleDateString()}</p>
           </footer>
         </div>
       )}
       
       {!result && (
         <footer className="mt-20 py-10 border-t border-slate-100 text-center">
-           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic tracking-[0.3em]">SP Route Optimizer • Engenharia de Movimentação Urbana • 2025</p>
+           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic tracking-[0.3em]">SP Route Optimizer • Logística de Auditoria Técnica • 2025</p>
         </footer>
+      )}
+
+      {editingVisit && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[32px] p-8 max-w-md w-full shadow-2xl border border-slate-100 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
+            <div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                {isNewVisit ? "Adicionar Nova Visita" : "Editar Detalhes da Visita"}
+              </h3>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">
+                {editingVisit.dayName} - Semana {editingVisit.weekIdx + 1}
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {/* Nome da Obra */}
+              <div className="space-y-1">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Nome da Obra</label>
+                <input
+                  type="text"
+                  value={editingVisit.visit.siteName}
+                  onChange={(e) => setEditingVisit({
+                    ...editingVisit,
+                    visit: { ...editingVisit.visit, siteName: e.target.value }
+                  })}
+                  placeholder="Nome do Empreendimento ou Obra"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all text-sm"
+                />
+              </div>
+
+              {/* Linha do Metrô */}
+              <div className="space-y-1">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Linha de Metrô Próxima</label>
+                <input
+                  type="text"
+                  value={editingVisit.visit.metroLine || ''}
+                  onChange={(e) => setEditingVisit({
+                    ...editingVisit,
+                    visit: { ...editingVisit.visit, metroLine: e.target.value }
+                  })}
+                  placeholder="Ex: L1-Azul, L2-Verde, L4-Amarela"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all text-sm"
+                />
+              </div>
+
+              {/* Caminhada em Minutos */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Tempo de Caminhada</label>
+                  <span className={`text-xs font-black px-2 py-0.5 rounded uppercase ${
+                    editingVisit.visit.walkingMinutes !== undefined && editingVisit.visit.walkingMinutes > 15 
+                      ? 'bg-rose-50 text-rose-600 border border-rose-100' 
+                      : 'bg-indigo-50 text-indigo-600'
+                  }`}>
+                    {editingVisit.visit.walkingMinutes || 0} min
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="60"
+                  step="1"
+                  value={editingVisit.visit.walkingMinutes || 5}
+                  onChange={(e) => setEditingVisit({
+                    ...editingVisit,
+                    visit: { ...editingVisit.visit, walkingMinutes: parseInt(e.target.value) }
+                  })}
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                {editingVisit.visit.walkingMinutes !== undefined && editingVisit.visit.walkingMinutes > 15 && (
+                  <p className="text-[10px] text-amber-600 font-bold leading-tight">
+                    ⚠️ Atenção: Caminhada acima de 15 minutos! Por favor, considere adicionar um transporte complementar no campo abaixo para segurança e facilidade.
+                  </p>
+                )}
+              </div>
+
+              {/* Ônibus ou Transporte Auxiliar */}
+              <div className="space-y-1">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest font-mono">Ônibus / Transporte Auxiliar</label>
+                <input
+                  type="text"
+                  value={editingVisit.visit.busInfo || ''}
+                  onChange={(e) => setEditingVisit({
+                    ...editingVisit,
+                    visit: { ...editingVisit.visit, busInfo: e.target.value }
+                  })}
+                  placeholder="Ex: Ônibus 175T-10, Integração, Uber, nulo"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all text-sm"
+                />
+                <p className="text-[10px] text-slate-400 font-medium italic">Deixe vazio se for pertinho da estação de metrô (&lt; 15 min de caminhada total).</p>
+              </div>
+
+              {/* Período Integral */}
+              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                <div className="flex flex-col">
+                  <span className="text-xs font-black text-slate-800">Período Integral</span>
+                  <span className="text-[10px] text-slate-400 font-semibold">Garante o dia inteiro reservado para esta obra</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={editingVisit.visit.isFullTurn}
+                  onChange={(e) => setEditingVisit({
+                    ...editingVisit,
+                    visit: { ...editingVisit.visit, isFullTurn: e.target.checked }
+                  })}
+                  className="h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 animate-none pointer-events-auto"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 items-center justify-between pt-4 border-t border-slate-100">
+              <div>
+                {!isNewVisit && (
+                  <button
+                    onClick={handleDeleteVisit}
+                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 text-xs font-black rounded-xl transition-colors border border-rose-100 flex items-center gap-1.5 active:scale-95"
+                  >
+                    Excluir
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingVisit(null)}
+                  className="px-5 py-2.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveVisit}
+                  className="px-6 py-2.5 text-xs font-black text-white bg-indigo-600 rounded-xl hover:bg-slate-900 shadow-lg shadow-indigo-100 hover:shadow-none transition-all active:scale-95"
+                >
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

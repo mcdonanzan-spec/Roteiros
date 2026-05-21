@@ -13,23 +13,32 @@ export async function analyzeLogistics(
     contents: `
     Aja como um Agente Especialista em Logística Urbana e Engenheiro de Transportes de São Paulo.
     
-    DADOS:
-    Moradia: ${currentAddress}
-    Obras: ${JSON.stringify(sites)}
+    CONTEXTO DO USUÁRIO:
+    - Moradia Atual: ${currentAddress}
+    - Escritório Fixo (Hub Diário): Rua Peixoto Gomide, Jardim Paulista/Bela Vista, SP (Próximo ao Metrô Trianon-Masp/Consolação).
+    - Ciclo de Trabalho: 1 mês focado em visitas técnicas às obras e os 2 meses seguintes fixos no escritório da Peixoto Gomide.
+    - Obras a Roteirizar: ${JSON.stringify(sites)}
 
-    DIRETRIZ DE AGRUPAMENTO (CRÍTICO):
-    1. MESMO ENDEREÇO/PROXIMIDADE: Se duas ou mais obras possuírem o mesmo endereço, CEP similar ou estiverem na mesma rua/vizinhança imediata, você DEVE agendá-las para o MESMO DIA. 
-    2. EFICIÊNCIA DE DESLOCAMENTO: O objetivo é minimizar o tempo de transporte. É preferível visitar 3 obras próximas em um único dia do que espalhá-las pela semana.
-    3. ROTEIRIZAÇÃO: Para cada obra, identifique a melhor estação de Metrô/Trem e o tempo de caminhada.
+    MISSÃO:
+    1. ROTEIRO MENSAL: Organize as visitas para o "Mês Ativo", agrupando obras por proximidade geográfica e CEP.
+    2. ANÁLISE DE MORADIA (HUB): A recomendação de moradia deve ser um "meio-termo" perfeito entre:
+       a) Facilidade de acesso ao escritório na Peixoto Gomide (Linha 2-Verde / Linha 4-Amarela).
+       b) Conectividade com os clusters de obras identificados.
     
-    REGRAS TÉCNICAS:
-    - METRÔ: Identifique a linha principal (ex: L4 Amarela, L2 Verde, L9 Esmeralda).
-    - ÚLTIMA MILHA: Calcule o tempo de caminhada da estação mais próxima até a obra.
-    - ÔNIBUS: Sugira ônibus apenas se a caminhada for > 15min.
-    - DISTRIBUIÇÃO: Distribua o volume total de visitas ao longo de 4 semanas, mantendo os agrupamentos geográficos.
+    DIRETRIZES TÉCNICAS E DE TRANSPORTE RESTRITAS (MANDATÓRIAS):
+    - REGRAS RÍGIDAS DE CAMINHADA (MÁXIMO 15 MINUTOS):
+      * NENHUMA caminhada ou deslocamento a pé deve ultrapassar 15 minutos ('walkingMinutes' <= 15).
+      * Se o trajeto a pé a partir do metrô/estação mais próxima, ou entre duas obras agendadas no mesmo dia (ex: de 'Teen Bumerangue' para 'Flow'), for superior a 15 minutos de caminhada real, você não deve atribuir apenas caminhada a pé!
+      * É OBRIGATÓRIO recomendar transporte público (ônibus específico de SP, integração de metrô ou Uber) no campo 'busInfo' (ex: "Ônibus Municipal Linha XXXXX ou Uber") e limitar 'walkingMinutes' a no máximo 15 minutos (representando o tempo de caminhada final entre o ponto do veículo/estação e o destino).
+      * No caso de obras curtas ou fáceis como 'Teen Bumerangue' que não necessitam de ônibus, liste apenas a caminhada dentro do limite ('walkingMinutes' <= 15) e mantenha 'busInfo' vazio ou nulo.
+      * No caso de obras distantes e isoladas como 'Flow', use sempre transporte complementar com detalhes específicos em 'busInfo', garantindo que o usuário nunca tenha que caminhar longas distâncias (máximo de 15 minutos).
+    - MESMO ENDEREÇO/PROXIMIDADE: Obras no mesmo local ou rua DEVEM estar no mesmo dia.
+    - ÚLTIMA MILHA: Detalhe com precisão prática a mobilidade urbana de São Paulo (bilhete único, conexões, linhas de ônibus da SPTrans reais se possível).
+    - DIAGNÓSTICO: Explique como a localização na Peixoto Gomide influencia a logística total do trimestre.
 
     ESTRUTURA DE RESPOSTA (JSON):
-    - monthlyAgenda: Cada dia deve conter um array de objetos { siteName, metroLine, walkingMinutes, busInfo, isFullTurn }.
+    - diagnosis: Análise estratégica considerando o ciclo 1/2 (Visita/Escritório).
+    - housingRecommendation: Bairros que equilibram Peixoto Gomide + Obras.
     `,
     config: {
       responseMimeType: "application/json",
