@@ -72,4 +72,5 @@ export interface SchedulePreferences {
   maxVisitsPerDay: 1 | 2 | 3;
   commuteNote?: string;
   housingPreference?: 'balanced' | 'office' | 'works';
+  startDate?: string;
 }

@@ -16,6 +16,7 @@ export async function analyzeLogistics(
 
   const maxVisitsPerDay = preferences?.maxVisitsPerDay || 2;
   const housingPreference = preferences?.housingPreference || 'balanced';
+  const startDate = preferences?.startDate || '2026-11-03';
   const commuteNote = preferences?.commuteNote || 
     'Usuário vem de Rio Claro (interior de SP) na segunda-feira de manhã direto para o escritório fixo da Peixoto Gomide; e na sexta-feira à tarde retorna para o interior. Residência na Brigadeiro Luís Antônio 1649 é utilizada estritamente de segunda a sexta.';
 
@@ -32,6 +33,9 @@ export async function analyzeLogistics(
 Aja como um Agente Especialista em Engenharia de Transportes, Mobilidade Urbana e Logística Operacional em São Paulo.
 
 CONTEXTO OPERACIONAL E ROTINA DO USUÁRIO:
+- DATA DE INÍCIO DO CICLO DE VISITAS: ${startDate} (Início das visitas a campo em Novembro de 2026).
+  * O mês alvo roteirizado é Novembro de 2026.
+  * Se o início for 03/11/2026 (Terça-feira): considere que a Segunda-feira 02/11/2026 é Feriado de Finados e chegada de viagem, portanto sem visitas de campo.
 - Residência Semanal em SP: ${currentAddress} (utilizada de segunda a sexta-feira).
 - Base nos Fins de Semana: Rio Claro (RC) / Interior de SP.
 - Escritório Central (Hub Fixo): Rua Peixoto Gomide, Bela Vista / Jardim Paulista, São Paulo - SP (Próximo ao Metrô Trianon-Masp e Consolação).

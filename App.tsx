@@ -30,6 +30,70 @@ const DEFAULT_RESIDENCE = 'Av. Brigadeiro Luís Antônio, 1649, Bela Vista, São
 
 type DayOfWeek = 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta';
 
+// Cálculo de datas reais para o calendário
+export const getCalendarDateForDay = (
+  startDateStr: string, 
+  weekIdx: number, 
+  dayName: DayOfWeek
+): { dateFormatted: string; fullDateStr: string; isBeforeStart: boolean; holidayName?: string } => {
+  const parts = startDateStr.split('-').map(Number);
+  const startYear = parts[0] || 2026;
+  const startMonth = (parts[1] || 11) - 1;
+  const startDay = parts[2] || 3;
+
+  const startDate = new Date(startYear, startMonth, startDay, 12, 0, 0);
+
+  // Segunda-feira da primeira semana
+  const startDayOfWeek = startDate.getDay();
+  const diffToMonday = startDayOfWeek === 0 ? -6 : 1 - startDayOfWeek;
+  const week1Monday = new Date(startDate);
+  week1Monday.setDate(startDate.getDate() + diffToMonday);
+
+  const dayOffsets: Record<DayOfWeek, number> = {
+    'Segunda': 0,
+    'Terça': 1,
+    'Quarta': 2,
+    'Quinta': 3,
+    'Sexta': 4
+  };
+
+  const targetDate = new Date(week1Monday);
+  targetDate.setDate(week1Monday.getDate() + (weekIdx * 7) + dayOffsets[dayName]);
+
+  const dayNum = String(targetDate.getDate()).padStart(2, '0');
+  const monthNum = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const yearNum = targetDate.getFullYear();
+
+  const dateFormatted = `${dayNum}/${monthNum}`;
+  const fullDateStr = `${dayNum}/${monthNum}/${yearNum}`;
+
+  const isBeforeStart = targetDate < new Date(startYear, startMonth, startDay, 0, 0, 0);
+
+  const holidayKey = `${dayNum}/${monthNum}`;
+  const holidays: Record<string, string> = {
+    '02/11': 'Finados',
+    '15/11': 'Proclamação da República',
+    '20/11': 'Consciência Negra',
+    '25/12': 'Natal',
+    '01/01': 'Ano Novo',
+    '25/01': 'Aniv. São Paulo'
+  };
+  const holidayName = holidays[holidayKey];
+
+  return {
+    dateFormatted,
+    fullDateStr,
+    isBeforeStart,
+    holidayName
+  };
+};
+
+export const getWeekRangeFormatted = (startDateStr: string, weekIdx: number): string => {
+  const seg = getCalendarDateForDay(startDateStr, weekIdx, 'Segunda');
+  const sex = getCalendarDateForDay(startDateStr, weekIdx, 'Sexta');
+  return `${seg.dateFormatted} a ${sex.dateFormatted}/${seg.fullDateStr.split('/')[2]}`;
+};
+
 interface VisitCardProps {
   visit: VisitDetail;
   isGrouped?: boolean;
@@ -121,6 +185,9 @@ const App: React.FC = () => {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'upload' | 'text'>('upload');
   
+  // Data de Início das Visitas (Padrão: 03/11/2026 - Novembro/2026)
+  const [startDate, setStartDate] = useState('2026-11-03');
+
   // Parâmetros de Rotina & Dias de Visita
   const [availableDays, setAvailableDays] = useState<DayOfWeek[]>([
     'Terça', 'Quarta', 'Quinta'
@@ -170,6 +237,7 @@ const App: React.FC = () => {
   const applyPresetRioClaro = () => {
     setAvailableDays(['Terça', 'Quarta', 'Quinta']);
     setMaxVisitsPerDay(2);
+    setStartDate('2026-11-03');
     setCommuteNote(
       'Venho de Rio Claro (interior de SP) na segunda de manhã direto para o escritório (Peixoto Gomide) e retorno na sexta-feira à tarde para o interior. A residência na Brigadeiro Luís Antônio 1649 é durante os dias de semana.'
     );
@@ -180,11 +248,6 @@ const App: React.FC = () => {
     setMaxVisitsPerDay(2);
   };
 
-  const applyPresetSingleVisit = () => {
-    setMaxVisitsPerDay(1);
-  };
-
-  // Processamento de arquivos (.xlsx, .xls, .csv, .tsv, .txt)
   const processFile = (file: File) => {
     setError(null);
     const reader = new FileReader();
@@ -335,6 +398,7 @@ const App: React.FC = () => {
 
   const loadSampleData = () => {
     setCurrentAddress(DEFAULT_RESIDENCE);
+    setStartDate('2026-11-03');
     const sample = 
       "Construtora Alfa\tTeen Bumerangue\tRua Bela Cintra, 1200\tConsolação\tSão Paulo\tSP\t01415-000\n" +
       "Construtora Beta\tFlow Consolação\tRua Augusta, 2400\tCerqueira César\tSão Paulo\tSP\t01412-100\n" +
@@ -480,6 +544,7 @@ const App: React.FC = () => {
           availableDays,
           maxVisitsPerDay,
           commuteNote,
+          startDate,
           housingPreference: enableHousingAnalysis ? housingPreference : 'balanced'
         }
       );
@@ -496,12 +561,14 @@ const App: React.FC = () => {
 
   const generateMarkdown = (res: AnalysisResult) => {
     let md = `# 🏗️ Planejamento Logístico SP - Expert Router\n\n`;
-    md += `> Gerado em: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n\n`;
+    md += `> Gerado em: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n`;
+    md += `> **Ciclo de Início das Visitas:** ${getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr} (Novembro de 2026)\n\n`;
     
     md += `## 📍 Contexto do Auditor Técnico\n`;
     md += `- **Residência Semanal em SP:** ${currentAddress} (Segunda a Sexta)\n`;
     md += `- **Base em Fins de Semana:** Rio Claro / Interior de SP\n`;
     md += `- **Hub de Escritório Fixo:** Rua Peixoto Gomide (Jardim Paulista/Bela Vista, SP)\n`;
+    md += `- **Data Inicial das Visitas:** ${getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}\n`;
     md += `- **Dias com Visitas de Campo:** ${availableDays.join(', ')}\n`;
     md += `- **Dias Fixo no Escritório:** ${['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].filter(d => !availableDays.includes(d as DayOfWeek)).join(', ') || 'Nenhum'}\n`;
     md += `- **Ritmo Máximo Diário:** Até ${maxVisitsPerDay} visita(s) por dia\n\n`;
@@ -510,7 +577,7 @@ const App: React.FC = () => {
     md += `"${res.diagnosis}"\n\n`;
     
     md += `### 🏢 Contexto de Ciclo de Trabalho\n`;
-    md += `- **Mês Atual:** Focado em Visitas Técnicas (Roteirizado abaixo).\n`;
+    md += `- **Mês Atual:** Focado em Visitas Técnicas (Roteirizado abaixo com datas reais).\n`;
     md += `- **Próximos 2 Meses:** Atividade fixa no escritório (Peixoto Gomide).\n\n`;
 
     md += `### 📊 Impacto Mensal\n`;
@@ -524,16 +591,19 @@ const App: React.FC = () => {
     md += `- **Tempo Médio Sugerido:** ${res.housingRecommendation.comparison.suggestedAvgTime}\n`;
     md += `- **Tempo Médio Atual:** ${res.housingRecommendation.comparison.currentAvgTime}\n\n`;
 
-    md += `## 📅 Agenda Mensal Roteirizada (Mês de Visitas)\n\n`;
+    md += `## 📅 Agenda Mensal Roteirizada - Novembro de 2026\n\n`;
     
-    res.monthlyAgenda.forEach((week) => {
-      md += `### Semana ${week.week}\n\n`;
-      md += `| Dia | Visitas | Detalhes de Transporte |\n`;
+    res.monthlyAgenda.forEach((week, wIdx) => {
+      md += `### Semana ${week.week} (${getWeekRangeFormatted(startDate, wIdx)})\n\n`;
+      md += `| Dia / Data | Visitas | Detalhes de Transporte |\n`;
       md += `| :--- | :--- | :--- |\n`;
       
       const days: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
       days.forEach(day => {
+        const cal = getCalendarDateForDay(startDate, wIdx, day);
         const visits = week.schedule[day];
+        const dayHeader = `${day} (${cal.dateFormatted})${cal.holidayName ? ` [Feriado: ${cal.holidayName}]` : ''}`;
+
         if (visits && visits.length > 0) {
           const names = visits.map(v => `**${v.siteName}**${v.isFullTurn ? ' (Integral)' : ''}`).join('<br>');
           const details = visits.map(v => {
@@ -543,14 +613,14 @@ const App: React.FC = () => {
             if (v.transitForced) info += ` ⚠️ *(Transporte Obrigatório: caminhada > 15 min)*`;
             return info;
           }).join('<br>');
-          md += `| ${day} | ${names} | ${details} |\n`;
+          md += `| ${dayHeader} | ${names} | ${details} |\n`;
         } else {
           const reason = day === 'Segunda' 
             ? '_Escritório Peixoto Gomide (Chegada de Rio Claro)_' 
             : day === 'Sexta' 
             ? '_Escritório Peixoto Gomide (Retorno para Interior)_' 
             : '_Escritório Peixoto Gomide_';
-          md += `| ${day} | ${reason} | - |\n`;
+          md += `| ${dayHeader} | ${reason} | - |\n`;
         }
       });
       md += `\n`;
@@ -570,7 +640,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `README_LOGISTICA_CICLO_${new Date().getTime()}.md`;
+    a.download = `README_LOGISTICA_NOVEMBRO_${new Date().getTime()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -615,7 +685,7 @@ const App: React.FC = () => {
         heightLeft -= pdfHeight;
       }
       const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
-      pdf.save(`Plano_Estrategico_SP_${dateStr}.pdf`);
+      pdf.save(`Plano_Estrategico_Novembro_${dateStr}.pdf`);
     } catch (err) {
       console.error(err);
       alert("Erro ao processar o arquivo PDF.");
@@ -748,14 +818,17 @@ const App: React.FC = () => {
                </div>
             </section>
 
-            {/* 3. NOVO: Parâmetros de Rotina Semanal e Dias de Visita */}
-            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-5">
-              <div className="flex items-center justify-between flex-wrap gap-2">
+            {/* 3. NOVO: Data de Início das Visitas & Parâmetros de Rotina */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-6">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-2">
-                  <CalendarDaysIcon className="h-4 w-4 text-indigo-600" />
-                  <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest">
-                    Dias de Visitas & Ritmo Diário
-                  </h2>
+                  <CalendarDaysIcon className="h-5 w-5 text-indigo-600" />
+                  <div>
+                    <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">
+                      Data de Início & Calendário de Visitas
+                    </h2>
+                    <p className="text-[11px] text-slate-400 font-medium">Configure a data exata em que você começará a rota de campo</p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
@@ -763,7 +836,7 @@ const App: React.FC = () => {
                     onClick={applyPresetRioClaro}
                     className="px-2.5 py-1 text-[10px] font-black uppercase rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 active:scale-95 transition-all"
                   >
-                    🚗 Rotina Rio Claro (Terça a Quinta)
+                    🚗 03/11/2026 (Novembro SP)
                   </button>
                   <button
                     type="button"
@@ -775,10 +848,36 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Seletor de Data de Início */}
+              <div className="p-4 bg-indigo-50/40 border border-indigo-100 rounded-2xl space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <label className="text-xs font-black text-indigo-950 uppercase tracking-wider block">
+                      Data de Início das Visitas a Campo:
+                    </label>
+                    <span className="text-[11px] text-indigo-700 font-semibold">
+                      As visitas serão geradas com as datas reais de cada dia do calendário.
+                    </span>
+                  </div>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="px-4 py-2.5 rounded-xl border border-indigo-200 bg-white font-bold text-slate-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 bg-white p-2.5 rounded-xl border border-indigo-100 shadow-sm flex-wrap">
+                  <span>📅 <strong>Data Selecionada:</strong> {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}</span>
+                  <span className="text-indigo-300">•</span>
+                  <span>Mês Alvo: {new Date(startDate + "T12:00:00").toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span>
+                </div>
+              </div>
+
               {/* Seletor visual de cada dia da semana */}
               <div className="space-y-2">
                 <label className="text-[11px] font-black text-slate-500 uppercase tracking-wider block">
-                  Selecione os dias em que deseja realizar visitas a campo:
+                  Dias da semana disponíveis para visitas de campo:
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                   {allWeekDays.map(day => {
@@ -813,7 +912,7 @@ const App: React.FC = () => {
                   })}
                 </div>
                 <p className="text-[10px] text-slate-400 font-medium italic">
-                  Dias marcados como "🏢 Escritório" serão reservados estritamente para trabalho interno na Peixoto Gomide (zero visitas de campo agendadas).
+                  Dias marcados como "🏢 Escritório" serão reservados para trabalho interno na Peixoto Gomide (zero visitas de campo agendadas).
                 </p>
               </div>
 
@@ -1105,7 +1204,7 @@ const App: React.FC = () => {
               }`}
             >
               {loading ? <ArrowPathIcon className="h-6 w-6 animate-spin" /> : <CheckCircleIcon className="h-6 w-6" />}
-              {loading ? 'Calculando Roteiro e Moradia...' : 'Otimizar Ciclo Logístico & Moradia'}
+              {loading ? 'Calculando Roteiro e Calendário...' : 'Otimizar Ciclo Logístico & Moradia'}
             </button>
           </div>
 
@@ -1115,16 +1214,16 @@ const App: React.FC = () => {
                <div className="bg-indigo-50 p-6 rounded-full inline-block">
                  <MapIcon className="h-12 w-12 text-indigo-600" />
                </div>
-               <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub e Onde Morar</h3>
+               <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub e Calendário Real</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
-                 O roteirizador analisa o escritório na Peixoto Gomide, a sua base na <strong>Brigadeiro Luís Antônio, 1649</strong> e o centroide das obras para planejar visitas e apontar o local mais estratégico para moradia em São Paulo.
+                 O roteirizador analisa o escritório na Peixoto Gomide, a sua base na <strong>Brigadeiro Luís Antônio, 1649</strong>, o início das visitas em <strong>{getCalendarDateForDay(startDate, 0, 'Terça').dateFormatted}</strong> e o centroide das obras para planejar visitas com datas reais do calendário.
                </p>
                <div className="pt-2 flex flex-col items-center gap-2">
                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
-                   Rotina Semanal: Visitas Terça a Quinta • Segunda e Sexta no Escritório
+                   Rotina: Visitas Terça a Quinta • Segunda e Sexta no Escritório
                  </span>
                  <span className="text-[11px] font-semibold text-slate-400">
-                   Suporta arquivos .XLSX, .XLS, .CSV, .TSV
+                   Mês Alvo: Novembro de 2026 (Datas Reais)
                  </span>
                </div>
              </div>
@@ -1139,8 +1238,8 @@ const App: React.FC = () => {
             <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2 space-y-3">
                <div className="flex items-center justify-between flex-wrap gap-2">
                  <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Estratégia de Ciclo Logístico (1/2)</h2>
-                 <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md">
-                   Base: {currentAddress} (Seg a Sex)
+                 <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md border border-indigo-100">
+                   Início: {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr} (Novembro/2026)
                  </span>
                </div>
                <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
@@ -1166,6 +1265,14 @@ const App: React.FC = () => {
           <section className="bg-white p-10 rounded-[50px] border border-slate-100 shadow-sm overflow-hidden">
              <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-lg border border-indigo-100">
+                      Calendário Real • Novembro de 2026
+                    </span>
+                    <span className="text-slate-400 text-xs font-semibold">
+                      Início em: {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}
+                    </span>
+                  </div>
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda: Mês de Auditoria (Visitas)</h3>
                   <p className="text-slate-500 mt-2 font-medium italic">
                     "Visitas alocadas estritamente nos dias permitidos ({availableDays.join(', ')}). Segunda e Sexta dedicadas ao escritório fixo na Peixoto Gomide e deslocamento interiorano."
@@ -1190,9 +1297,16 @@ const App: React.FC = () => {
              <div className="space-y-16">
                {result.monthlyAgenda.map((week, wIdx) => (
                  <div key={wIdx} className="page-break-inside-avoid">
-                    <div className="flex items-center gap-6 mb-8">
-                       <span className="px-6 py-2 bg-slate-900 text-white rounded-2xl text-xs font-black tracking-[0.2em] uppercase">Semana {week.week}</span>
-                       <div className="h-px bg-slate-100 flex-1"></div>
+                    <div className="flex items-center justify-between mb-8 flex-wrap gap-2">
+                       <div className="flex items-center gap-3">
+                         <span className="px-6 py-2 bg-slate-900 text-white rounded-2xl text-xs font-black tracking-[0.2em] uppercase">
+                           Semana {week.week}
+                         </span>
+                         <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100">
+                           🗓️ {getWeekRangeFormatted(startDate, wIdx)}
+                         </span>
+                       </div>
+                       <div className="h-px bg-slate-100 flex-1 ml-4 hidden sm:block"></div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                       {allWeekDays.map((dayName) => {
@@ -1201,19 +1315,30 @@ const App: React.FC = () => {
                         const isMonday = dayName === 'Segunda';
                         const isFriday = dayName === 'Sexta';
                         const isAllowed = availableDays.includes(dayName);
+                        const cal = getCalendarDateForDay(startDate, wIdx, dayName);
 
                         return (
                           <div key={dayName} className="space-y-4">
                             <div className="flex items-center justify-between px-2">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{dayName}</span>
-                              {!isAllowed && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-black text-slate-700 uppercase tracking-wider">{dayName}</span>
+                                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                  {cal.dateFormatted}
+                                </span>
+                              </div>
+                              {cal.holidayName && (
+                                <span className="text-[8px] font-black uppercase text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                  {cal.holidayName}
+                                </span>
+                              )}
+                              {!isAllowed && !cal.holidayName && (
                                 <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
                                   Escritório
                                 </span>
                               )}
                             </div>
 
-                            <div className={`space-y-3 min-h-[150px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
+                            <div className={`space-y-3 min-h-[160px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
                               isMultiVisit 
                                 ? 'bg-indigo-50/50 border-indigo-200' 
                                 : !isAllowed 
@@ -1232,7 +1357,7 @@ const App: React.FC = () => {
                                   ))}
                                 </div>
                               ) : (
-                                <div className="h-full flex flex-col items-center justify-center py-6 px-2 text-center space-y-1 opacity-80 group-hover/day:opacity-100 transition-opacity">
+                                <div className="h-full flex flex-col items-center justify-center py-6 px-2 text-center space-y-1 opacity-85 group-hover/day:opacity-100 transition-opacity">
                                    <BuildingOfficeIcon className="h-6 w-6 text-slate-400 mb-1" />
                                    <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Escritório Peixoto Gomide</span>
                                    {isMonday && (
@@ -1245,7 +1370,17 @@ const App: React.FC = () => {
                                        🚗 Retorno ao Interior
                                      </span>
                                    )}
-                                   {!isMonday && !isFriday && (
+                                   {cal.holidayName && (
+                                     <span className="text-[8px] font-black text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                       Feriado Nacional ({cal.holidayName})
+                                     </span>
+                                   )}
+                                   {cal.isBeforeStart && (
+                                     <span className="text-[8px] font-semibold text-slate-400">
+                                       Visitas iniciam em {getCalendarDateForDay(startDate, 0, 'Terça').dateFormatted}
+                                     </span>
+                                   )}
+                                   {!isMonday && !isFriday && !cal.holidayName && !cal.isBeforeStart && (
                                      <span className="text-[8px] text-slate-400 font-semibold">Dia de trabalho interno</span>
                                    )}
                                 </div>
@@ -1365,8 +1500,8 @@ const App: React.FC = () => {
               <h3 className="text-xl font-black text-slate-900 tracking-tight">
                 {isNewVisit ? "Adicionar Nova Visita" : "Editar Detalhes da Visita"}
               </h3>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">
-                {editingVisit.dayName} - Semana {editingVisit.weekIdx + 1}
+              <p className="text-xs text-indigo-600 font-black uppercase tracking-wider mt-1">
+                {editingVisit.dayName}, {getCalendarDateForDay(startDate, editingVisit.weekIdx, editingVisit.dayName).fullDateStr} • Semana {editingVisit.weekIdx + 1}
               </p>
             </div>
 
