@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences } from './types';
-import { analyzeLogistics } from './services/geminiService';
+import { analyzeLogistics, validateAndEnforceTransit } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -30,6 +30,34 @@ const DEFAULT_RESIDENCE = 'Av. Brigadeiro Luís Antônio, 1649, Bela Vista, São
 
 type DayOfWeek = 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta';
 
+export const formatDisplayDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length < 3) return dateStr;
+  const day = String(parts[2]).padStart(2, '0');
+  const month = String(parts[1]).padStart(2, '0');
+  const year = parts[0];
+  return `${day}/${month}/${year}`;
+};
+
+export const formatDisplayDateShort = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length < 3) return dateStr;
+  const day = String(parts[2]).padStart(2, '0');
+  const month = String(parts[1]).padStart(2, '0');
+  return `${day}/${month}`;
+};
+
+export const getDayOfWeekName = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length < 3) return '';
+  const d = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1, 12, 0, 0);
+  const names = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  return names[d.getDay()];
+};
+
 // Cálculo de datas reais para o calendário
 export const getCalendarDateForDay = (
   startDateStr: string, 
@@ -41,13 +69,16 @@ export const getCalendarDateForDay = (
   const startMonth = (parts[1] || 11) - 1;
   const startDay = parts[2] || 3;
 
-  const startDate = new Date(startYear, startMonth, startDay, 12, 0, 0);
+  const startDateObj = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
 
-  // Segunda-feira da primeira semana
-  const startDayOfWeek = startDate.getDay();
-  const diffToMonday = startDayOfWeek === 0 ? -6 : 1 - startDayOfWeek;
-  const week1Monday = new Date(startDate);
-  week1Monday.setDate(startDate.getDate() + diffToMonday);
+  const startDayOfWeek = startDateObj.getDay();
+  // Se domingo (0), a primeira segunda da semana ativa é amanhã (+1 dia)
+  // Se sábado (6), a primeira segunda da semana ativa é daqui a 2 dias (+2 dias)
+  // Se dia de semana (1 a 5), a segunda-feira daquela semana é 1 - startDayOfWeek
+  const diffToMonday = startDayOfWeek === 0 ? 1 : (startDayOfWeek === 6 ? 2 : 1 - startDayOfWeek);
+  const week1Monday = new Date(startDateObj);
+  week1Monday.setDate(startDateObj.getDate() + diffToMonday);
+  week1Monday.setHours(0, 0, 0, 0);
 
   const dayOffsets: Record<DayOfWeek, number> = {
     'Segunda': 0,
@@ -59,6 +90,7 @@ export const getCalendarDateForDay = (
 
   const targetDate = new Date(week1Monday);
   targetDate.setDate(week1Monday.getDate() + (weekIdx * 7) + dayOffsets[dayName]);
+  targetDate.setHours(0, 0, 0, 0);
 
   const dayNum = String(targetDate.getDate()).padStart(2, '0');
   const monthNum = String(targetDate.getMonth() + 1).padStart(2, '0');
@@ -67,7 +99,7 @@ export const getCalendarDateForDay = (
   const dateFormatted = `${dayNum}/${monthNum}`;
   const fullDateStr = `${dayNum}/${monthNum}/${yearNum}`;
 
-  const isBeforeStart = targetDate < new Date(startYear, startMonth, startDay, 0, 0, 0);
+  const isBeforeStart = targetDate.getTime() < startDateObj.getTime();
 
   const holidayKey = `${dayNum}/${monthNum}`;
   const holidays: Record<string, string> = {
@@ -233,11 +265,36 @@ const App: React.FC = () => {
     }
   };
 
+  // Função para atualização dinâmica da data de início com sincronização imediata da agenda
+  const handleStartDateChange = (newDateStr: string) => {
+    setStartDate(newDateStr);
+    if (result) {
+      const sites = parsedSites.length > 0 ? parsedSites : processInput();
+      const updated = validateAndEnforceTransit(
+        result,
+        sites,
+        availableDays,
+        maxVisitsPerDay,
+        newDateStr
+      );
+      setResult({ ...updated });
+    }
+  };
+
   // Presets rápidos de rotina
-  const applyPresetRioClaro = () => {
+  const applyPresetRioClaroNov04 = () => {
     setAvailableDays(['Terça', 'Quarta', 'Quinta']);
     setMaxVisitsPerDay(2);
-    setStartDate('2026-11-03');
+    handleStartDateChange('2026-11-04');
+    setCommuteNote(
+      'Venho de Rio Claro (interior de SP) na segunda de manhã direto para o escritório (Peixoto Gomide) e retorno na sexta-feira à tarde para o interior. A residência na Brigadeiro Luís Antônio 1649 é durante os dias de semana.'
+    );
+  };
+
+  const applyPresetRioClaroNov03 = () => {
+    setAvailableDays(['Terça', 'Quarta', 'Quinta']);
+    setMaxVisitsPerDay(2);
+    handleStartDateChange('2026-11-03');
     setCommuteNote(
       'Venho de Rio Claro (interior de SP) na segunda de manhã direto para o escritório (Peixoto Gomide) e retorno na sexta-feira à tarde para o interior. A residência na Brigadeiro Luís Antônio 1649 é durante os dias de semana.'
     );
@@ -562,13 +619,13 @@ const App: React.FC = () => {
   const generateMarkdown = (res: AnalysisResult) => {
     let md = `# 🏗️ Planejamento Logístico SP - Expert Router\n\n`;
     md += `> Gerado em: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n`;
-    md += `> **Ciclo de Início das Visitas:** ${getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr} (Novembro de 2026)\n\n`;
+    md += `> **Ciclo de Início das Visitas:** ${formatDisplayDate(startDate)} (${getDayOfWeekName(startDate)}-feira) - Novembro de 2026\n\n`;
     
     md += `## 📍 Contexto do Auditor Técnico\n`;
     md += `- **Residência Semanal em SP:** ${currentAddress} (Segunda a Sexta)\n`;
     md += `- **Base em Fins de Semana:** Rio Claro / Interior de SP\n`;
     md += `- **Hub de Escritório Fixo:** Rua Peixoto Gomide (Jardim Paulista/Bela Vista, SP)\n`;
-    md += `- **Data Inicial das Visitas:** ${getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}\n`;
+    md += `- **Data Inicial das Visitas:** ${formatDisplayDate(startDate)} (${getDayOfWeekName(startDate)}-feira)\n`;
     md += `- **Dias com Visitas de Campo:** ${availableDays.join(', ')}\n`;
     md += `- **Dias Fixo no Escritório:** ${['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].filter(d => !availableDays.includes(d as DayOfWeek)).join(', ') || 'Nenhum'}\n`;
     md += `- **Ritmo Máximo Diário:** Até ${maxVisitsPerDay} visita(s) por dia\n\n`;
@@ -833,10 +890,25 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
-                    onClick={applyPresetRioClaro}
-                    className="px-2.5 py-1 text-[10px] font-black uppercase rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 active:scale-95 transition-all"
+                    onClick={applyPresetRioClaroNov04}
+                    className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg border transition-all ${
+                      startDate === '2026-11-04'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                    }`}
                   >
-                    🚗 03/11/2026 (Novembro SP)
+                    🚗 04/11/2026 (Qua - Início)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyPresetRioClaroNov03}
+                    className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg border transition-all ${
+                      startDate === '2026-11-03'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                    }`}
+                  >
+                    03/11/2026 (Ter)
                   </button>
                   <button
                     type="button"
@@ -856,21 +928,29 @@ const App: React.FC = () => {
                       Data de Início das Visitas a Campo:
                     </label>
                     <span className="text-[11px] text-indigo-700 font-semibold">
-                      As visitas serão geradas com as datas reais de cada dia do calendário.
+                      As visitas começarão estritamente a partir do dia selecionado. Dias anteriores da semana não terão visitas.
                     </span>
                   </div>
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => handleStartDateChange(e.target.value)}
                     className="px-4 py-2.5 rounded-xl border border-indigo-200 bg-white font-bold text-slate-800 text-sm focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm"
                   />
                 </div>
 
                 <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 bg-white p-2.5 rounded-xl border border-indigo-100 shadow-sm flex-wrap">
-                  <span>📅 <strong>Data Selecionada:</strong> {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}</span>
+                  <span>📅 <strong>Data de Início Selecionada:</strong> {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)</span>
                   <span className="text-indigo-300">•</span>
                   <span>Mês Alvo: {new Date(startDate + "T12:00:00").toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span>
+                  {result && (
+                    <>
+                      <span className="text-indigo-300">•</span>
+                      <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-[10px] font-black">
+                        ✓ Roteiro atualizado a partir de {formatDisplayDateShort(startDate)}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1216,7 +1296,7 @@ const App: React.FC = () => {
                </div>
                <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub e Calendário Real</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
-                 O roteirizador analisa o escritório na Peixoto Gomide, a sua base na <strong>Brigadeiro Luís Antônio, 1649</strong>, o início das visitas em <strong>{getCalendarDateForDay(startDate, 0, 'Terça').dateFormatted}</strong> e o centroide das obras para planejar visitas com datas reais do calendário.
+                 O roteirizador analisa o escritório na Peixoto Gomide, a sua base na <strong>Brigadeiro Luís Antônio, 1649</strong>, o início das visitas em <strong>{formatDisplayDateShort(startDate)} ({getDayOfWeekName(startDate)})</strong> e o centroide das obras para planejar visitas com datas reais do calendário.
                </p>
                <div className="pt-2 flex flex-col items-center gap-2">
                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
@@ -1239,7 +1319,7 @@ const App: React.FC = () => {
                <div className="flex items-center justify-between flex-wrap gap-2">
                  <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Estratégia de Ciclo Logístico (1/2)</h2>
                  <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md border border-indigo-100">
-                   Início: {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr} (Novembro/2026)
+                   Início: {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)
                  </span>
                </div>
                <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
@@ -1270,7 +1350,7 @@ const App: React.FC = () => {
                       Calendário Real • Novembro de 2026
                     </span>
                     <span className="text-slate-400 text-xs font-semibold">
-                      Início em: {getCalendarDateForDay(startDate, 0, 'Terça').fullDateStr}
+                      Início em: {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)
                     </span>
                   </div>
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda: Mês de Auditoria (Visitas)</h3>
@@ -1331,7 +1411,12 @@ const App: React.FC = () => {
                                   {cal.holidayName}
                                 </span>
                               )}
-                              {!isAllowed && !cal.holidayName && (
+                              {cal.isBeforeStart && !cal.holidayName && (
+                                <span className="text-[8px] font-black uppercase text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                                  Pré-Início
+                                </span>
+                              )}
+                              {!isAllowed && !cal.holidayName && !cal.isBeforeStart && (
                                 <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
                                   Escritório
                                 </span>
@@ -1341,6 +1426,8 @@ const App: React.FC = () => {
                             <div className={`space-y-3 min-h-[160px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
                               isMultiVisit 
                                 ? 'bg-indigo-50/50 border-indigo-200' 
+                                : cal.isBeforeStart
+                                ? 'bg-slate-100/60 border-slate-200'
                                 : !isAllowed 
                                 ? 'bg-slate-50/80 border-slate-200' 
                                 : 'bg-slate-50/70 border-slate-200'
@@ -1377,7 +1464,7 @@ const App: React.FC = () => {
                                    )}
                                    {cal.isBeforeStart && (
                                      <span className="text-[8px] font-semibold text-slate-400">
-                                       Visitas iniciam em {getCalendarDateForDay(startDate, 0, 'Terça').dateFormatted}
+                                       Visitas iniciam em {formatDisplayDateShort(startDate)} ({getDayOfWeekName(startDate)})
                                      </span>
                                    )}
                                    {!isMonday && !isFriday && !cal.holidayName && !cal.isBeforeStart && (
@@ -1503,6 +1590,11 @@ const App: React.FC = () => {
               <p className="text-xs text-indigo-600 font-black uppercase tracking-wider mt-1">
                 {editingVisit.dayName}, {getCalendarDateForDay(startDate, editingVisit.weekIdx, editingVisit.dayName).fullDateStr} • Semana {editingVisit.weekIdx + 1}
               </p>
+              {getCalendarDateForDay(startDate, editingVisit.weekIdx, editingVisit.dayName).isBeforeStart && (
+                <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] font-medium leading-snug">
+                  ⚠️ <strong>Dia Pré-Início:</strong> Este dia ocorre antes da data oficial de início ({formatDisplayDate(startDate)}). O roteirizador padrão reserva esses dias para trabalho interno.
+                </div>
+              )}
             </div>
 
             <div className="space-y-4">
