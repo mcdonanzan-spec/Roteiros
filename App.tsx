@@ -1,6 +1,6 @@
-
 import React, { useState, useRef } from 'react';
-import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda } from './types';
+import * as XLSX from 'xlsx';
+import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences } from './types';
 import { analyzeLogistics } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
 import { jsPDF } from 'jspdf';
@@ -16,8 +16,19 @@ import {
   MapIcon,
   TruckIcon,
   CodeBracketIcon,
-  BuildingOfficeIcon
+  BuildingOfficeIcon,
+  ArrowUpTrayIcon,
+  DocumentTextIcon,
+  SparklesIcon,
+  CheckIcon,
+  TrashIcon,
+  CalendarDaysIcon,
+  AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline';
+
+const DEFAULT_RESIDENCE = 'Av. Brigadeiro Luís Antônio, 1649, Bela Vista, São Paulo - SP';
+
+type DayOfWeek = 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta';
 
 interface VisitCardProps {
   visit: VisitDetail;
@@ -83,6 +94,12 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
                 &gt;15 min!
               </span>
             )}
+            {visit.transitForced && (
+              <span className="px-1.5 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[8px] font-black rounded uppercase flex items-center gap-1">
+                <TruckIcon className="h-2.5 w-2.5 shrink-0" />
+                Transporte Forçado
+              </span>
+            )}
           </div>
         )}
         {visit.busInfo && (
@@ -97,8 +114,26 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
 };
 
 const App: React.FC = () => {
-  const [currentAddress, setCurrentAddress] = useState('');
+  // Residência cadastrada (Segunda a Sexta): Brigadeiro Luís Antônio, 1649
+  const [currentAddress, setCurrentAddress] = useState(DEFAULT_RESIDENCE);
   const [rawInput, setRawInput] = useState('');
+  const [parsedSites, setParsedSites] = useState<ConstructionSite[]>([]);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [inputMode, setInputMode] = useState<'upload' | 'text'>('upload');
+  
+  // Parâmetros de Rotina & Dias de Visita
+  const [availableDays, setAvailableDays] = useState<DayOfWeek[]>([
+    'Terça', 'Quarta', 'Quinta'
+  ]);
+  const [maxVisitsPerDay, setMaxVisitsPerDay] = useState<1 | 2 | 3>(2);
+  const [commuteNote, setCommuteNote] = useState(
+    'Venho de Rio Claro (interior de SP) na segunda de manhã direto para o escritório (Peixoto Gomide) e retorno na sexta-feira à tarde para o interior. A residência na Brigadeiro Luís Antônio 1649 é durante os dias de semana.'
+  );
+
+  // Campo de Análise de Moradia Ideal ("Onde Morar")
+  const [enableHousingAnalysis, setEnableHousingAnalysis] = useState(true);
+  const [housingPreference, setHousingPreference] = useState<'balanced' | 'office' | 'works'>('balanced');
+
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -107,15 +142,230 @@ const App: React.FC = () => {
   // Estados para edição interativa de visitas
   const [editingVisit, setEditingVisit] = useState<{
     weekIdx: number;
-    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta';
+    dayName: DayOfWeek;
     visitIdx: number;
     visit: VisitDetail;
   } | null>(null);
   const [isNewVisit, setIsNewVisit] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  // Alternar dia disponível para visitas
+  const handleToggleDay = (day: DayOfWeek) => {
+    if (availableDays.includes(day)) {
+      if (availableDays.length === 1) {
+        alert("Pelo menos um dia da semana deve estar habilitado para visitas técnicas.");
+        return;
+      }
+      setAvailableDays(availableDays.filter(d => d !== day));
+    } else {
+      const order: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+      const next = [...availableDays, day].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      setAvailableDays(next);
+    }
+  };
+
+  // Presets rápidos de rotina
+  const applyPresetRioClaro = () => {
+    setAvailableDays(['Terça', 'Quarta', 'Quinta']);
+    setMaxVisitsPerDay(2);
+    setCommuteNote(
+      'Venho de Rio Claro (interior de SP) na segunda de manhã direto para o escritório (Peixoto Gomide) e retorno na sexta-feira à tarde para o interior. A residência na Brigadeiro Luís Antônio 1649 é durante os dias de semana.'
+    );
+  };
+
+  const applyPresetFullWeek = () => {
+    setAvailableDays(['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta']);
+    setMaxVisitsPerDay(2);
+  };
+
+  const applyPresetSingleVisit = () => {
+    setMaxVisitsPerDay(1);
+  };
+
+  // Processamento de arquivos (.xlsx, .xls, .csv, .tsv, .txt)
+  const processFile = (file: File) => {
+    setError(null);
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target?.result;
+        const workbook = XLSX.read(buffer, { type: 'binary' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        if (!rows || rows.length === 0) {
+          setError('A planilha selecionada está vazia.');
+          return;
+        }
+
+        let startIndex = 0;
+        const firstRowText = (rows[0] || []).map(cell => String(cell || '').toLowerCase()).join(' ');
+        if (
+          firstRowText.includes('raz') || 
+          firstRowText.includes('obra') || 
+          firstRowText.includes('nome') || 
+          firstRowText.includes('endere') || 
+          firstRowText.includes('cep') ||
+          firstRowText.includes('cidade') ||
+          firstRowText.includes('bairro')
+        ) {
+          startIndex = 1;
+        }
+
+        const sitesExtracted: ConstructionSite[] = [];
+        const linesForRawInput: string[] = [];
+
+        for (let i = startIndex; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.length === 0) continue;
+
+          const razaoSocial = String(row[0] ?? '').trim();
+          const nomeObra = String(row[1] ?? '').trim();
+          const endereco = String(row[2] ?? '').trim();
+          const setor = String(row[3] ?? '').trim();
+          const cidade = String(row[4] ?? '').trim();
+          const estado = String(row[5] ?? '').trim();
+          const cep = String(row[6] ?? '').trim();
+
+          const effectiveNome = nomeObra || razaoSocial || (endereco ? `Obra - ${endereco.slice(0, 25)}` : '');
+
+          if (effectiveNome && (endereco || setor || cidade || cep)) {
+            sitesExtracted.push({
+              razaoSocial,
+              nomeObra: effectiveNome,
+              endereco,
+              setor,
+              cidade: cidade || 'São Paulo',
+              estado: estado || 'SP',
+              cep
+            });
+
+            linesForRawInput.push([
+              razaoSocial,
+              effectiveNome,
+              endereco,
+              setor,
+              cidade || 'São Paulo',
+              estado || 'SP',
+              cep
+            ].join('\t'));
+          }
+        }
+
+        if (sitesExtracted.length === 0) {
+          setError('Não foi possível identificar as obras na planilha. Certifique-se de que possui as colunas de Nome da Obra, Endereço, Bairro e CEP.');
+          return;
+        }
+
+        setParsedSites(sitesExtracted);
+        setRawInput(linesForRawInput.join('\n'));
+        setUploadedFileName(`${file.name} (${sitesExtracted.length} obras identificadas)`);
+      } catch (err) {
+        console.error('Erro na leitura da planilha:', err);
+        setError('Erro ao processar arquivo. Suportamos formatos .xlsx, .xls, .csv, .tsv.');
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const processInput = (): ConstructionSite[] => {
+    if (parsedSites.length > 0 && inputMode === 'upload') {
+      return parsedSites;
+    }
+
+    if (!rawInput.trim()) return [];
+
+    const lines = rawInput.trim().split('\n');
+    return lines.map((line, idx) => {
+      let cols: string[] = [];
+      if (line.includes('\t')) {
+        cols = line.split('\t');
+      } else if (line.includes(';')) {
+        cols = line.split(';');
+      } else if (line.includes(',')) {
+        cols = line.split(',');
+      } else {
+        cols = line.split(/\s{2,}/);
+      }
+
+      const lineLower = line.toLowerCase();
+      if (idx === 0 && (lineLower.includes('razão') || lineLower.includes('nome da obra') || lineLower.includes('endereço'))) {
+        return null;
+      }
+
+      const razaoSocial = (cols[0] || '').trim();
+      const nomeObra = (cols[1] || cols[0] || '').trim();
+      const endereco = (cols[2] || '').trim();
+      const setor = (cols[3] || '').trim();
+      const cidade = (cols[4] || 'São Paulo').trim();
+      const estado = (cols[5] || 'SP').trim();
+      const cep = (cols[6] || '').trim();
+
+      return {
+        razaoSocial,
+        nomeObra: nomeObra || `Obra #${idx + 1}`,
+        endereco,
+        setor,
+        cidade,
+        estado,
+        cep
+      };
+    }).filter((s): s is ConstructionSite => s !== null && Boolean(s.nomeObra && (s.endereco || s.setor || s.cidade || s.cep)));
+  };
+
+  const loadSampleData = () => {
+    setCurrentAddress(DEFAULT_RESIDENCE);
+    const sample = 
+      "Construtora Alfa\tTeen Bumerangue\tRua Bela Cintra, 1200\tConsolação\tSão Paulo\tSP\t01415-000\n" +
+      "Construtora Beta\tFlow Consolação\tRua Augusta, 2400\tCerqueira César\tSão Paulo\tSP\t01412-100\n" +
+      "Gafisa SA\tHorizonte Morumbi\tAv. Giovanni Gronchi, 5819\tVila Andrade\tSão Paulo\tSP\t05724-003\n" +
+      "Cyrela Brazil\tParque Santana\tRua Voluntários da Pátria, 3500\tSantana\tSão Paulo\tSP\t02401-300\n" +
+      "Even Construtora\tVila Mariana Prime\tRua Domingos de Morais, 2100\tVila Mariana\tSão Paulo\tSP\t04036-000\n" +
+      "Mitre Realty\tMooca Corporate\tRua da Mooca, 3800\tMooca\tSão Paulo\tSP\t03165-001\n" +
+      "Trisul SA\tPinheiros Design\tRua dos Pinheiros, 850\tPinheiros\tSão Paulo\tSP\t05422-001\n" +
+      "Plano&Plano\tTatuapé Sky\tRua Tuiuti, 2000\tTatuapé\tSão Paulo\tSP\t03081-000";
+    
+    setRawInput(sample);
+    const sites = sample.split('\n').map(line => {
+      const cols = line.split('\t');
+      return {
+        razaoSocial: cols[0],
+        nomeObra: cols[1],
+        endereco: cols[2],
+        setor: cols[3],
+        cidade: cols[4],
+        estado: cols[5],
+        cep: cols[6]
+      };
+    });
+    setParsedSites(sites);
+    setUploadedFileName('Exemplo de Obras SP (8 obras carregadas)');
+    setError(null);
+  };
+
   const handleOpenEdit = (
     weekIdx: number, 
-    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta', 
+    dayName: DayOfWeek, 
     visitIdx: number, 
     visit: VisitDetail
   ) => {
@@ -130,7 +380,7 @@ const App: React.FC = () => {
 
   const handleOpenAdd = (
     weekIdx: number,
-    dayName: 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta'
+    dayName: DayOfWeek
   ) => {
     setIsNewVisit(true);
     setEditingVisit({
@@ -154,6 +404,16 @@ const App: React.FC = () => {
     if (!visit.siteName.trim()) {
       alert("Por favor, digite o nome da obra.");
       return;
+    }
+
+    if (visit.walkingMinutes !== undefined && visit.walkingMinutes > 15) {
+      const original = visit.walkingMinutes;
+      visit.transitForced = true;
+      visit.originalWalkingMinutes = original;
+      if (!visit.busInfo || visit.busInfo.trim() === '' || visit.busInfo.toLowerCase().includes('nulo')) {
+        visit.busInfo = `Ônibus SPTrans / Metrô Integrado (Convertido: caminhada de ${original} min > limite de 15 min)`;
+      }
+      visit.walkingMinutes = Math.min(8, Math.max(4, Math.round(original * 0.25)));
     }
 
     const updatedAgenda = [...result.monthlyAgenda];
@@ -198,44 +458,37 @@ const App: React.FC = () => {
     });
     setEditingVisit(null);
   };
-  
-  const reportRef = useRef<HTMLDivElement>(null);
-
-  const processInput = () => {
-    const lines = rawInput.trim().split('\n');
-    return lines.map(line => {
-      const cols = line.split('\t'); 
-      return {
-        razaoSocial: cols[0] || '',
-        nomeObra: cols[1] || '',
-        endereco: cols[2] || '',
-        setor: cols[3] || '',
-        cidade: cols[4] || '',
-        estado: cols[5] || '',
-        cep: cols[6] || ''
-      };
-    }).filter(s => s.nomeObra);
-  };
 
   const handleRunAnalysis = async () => {
     if (!currentAddress) {
-      setError('Por favor, insira seu endereço de moradia atual.');
+      setError('Por favor, informe seu endereço de residência.');
       return;
     }
     const sites = processInput();
     if (sites.length === 0) {
-      setError('Por favor, cole os dados da planilha (copie as colunas A a G).');
+      setError('Nenhuma obra encontrada. Por favor, faça o upload de uma planilha (.xlsx, .xls, .csv) ou cole os dados.');
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const data = await analyzeLogistics(currentAddress, sites);
+      const data = await analyzeLogistics(
+        currentAddress, 
+        sites, 
+        {
+          availableDays,
+          maxVisitsPerDay,
+          commuteNote,
+          housingPreference: enableHousingAnalysis ? housingPreference : 'balanced'
+        }
+      );
       setResult(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro na análise:", err);
-      setError('Ocorreu um erro na análise de logística. Verifique os dados inseridos.');
+      setError(
+        err?.message || 'Falha ao processar a análise com o agente logístico. Por favor, tente novamente.'
+      );
     } finally {
       setLoading(false);
     }
@@ -245,6 +498,14 @@ const App: React.FC = () => {
     let md = `# 🏗️ Planejamento Logístico SP - Expert Router\n\n`;
     md += `> Gerado em: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n\n`;
     
+    md += `## 📍 Contexto do Auditor Técnico\n`;
+    md += `- **Residência Semanal em SP:** ${currentAddress} (Segunda a Sexta)\n`;
+    md += `- **Base em Fins de Semana:** Rio Claro / Interior de SP\n`;
+    md += `- **Hub de Escritório Fixo:** Rua Peixoto Gomide (Jardim Paulista/Bela Vista, SP)\n`;
+    md += `- **Dias com Visitas de Campo:** ${availableDays.join(', ')}\n`;
+    md += `- **Dias Fixo no Escritório:** ${['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].filter(d => !availableDays.includes(d as DayOfWeek)).join(', ') || 'Nenhum'}\n`;
+    md += `- **Ritmo Máximo Diário:** Até ${maxVisitsPerDay} visita(s) por dia\n\n`;
+
     md += `## 🩺 Diagnóstico Estratégico\n\n`;
     md += `"${res.diagnosis}"\n\n`;
     
@@ -256,6 +517,13 @@ const App: React.FC = () => {
     md += `- **Economia Mensal:** ${res.housingRecommendation.comparison.monthlySavings}\n`;
     md += `- **Eficiência Atual:** ${res.currentEvaluation.efficiency}\n\n`;
 
+    md += `## 🏠 Recomendação de Moradia (Onde Morar em SP)\n\n`;
+    md += `**Bairros Estratégicos:** ${res.housingRecommendation.topNeighborhoods.join(', ')}\n\n`;
+    md += `> ${res.housingRecommendation.centroidDescription}\n\n`;
+    md += `### Comparativo com Moradia Atual (${currentAddress})\n`;
+    md += `- **Tempo Médio Sugerido:** ${res.housingRecommendation.comparison.suggestedAvgTime}\n`;
+    md += `- **Tempo Médio Atual:** ${res.housingRecommendation.comparison.currentAvgTime}\n\n`;
+
     md += `## 📅 Agenda Mensal Roteirizada (Mês de Visitas)\n\n`;
     
     res.monthlyAgenda.forEach((week) => {
@@ -263,7 +531,7 @@ const App: React.FC = () => {
       md += `| Dia | Visitas | Detalhes de Transporte |\n`;
       md += `| :--- | :--- | :--- |\n`;
       
-      const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'] as const;
+      const days: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
       days.forEach(day => {
         const visits = week.schedule[day];
         if (visits && visits.length > 0) {
@@ -272,22 +540,21 @@ const App: React.FC = () => {
             let info = `${v.metroLine || 'N/A'}`;
             if (v.walkingMinutes) info += ` 🚶 ${v.walkingMinutes}min`;
             if (v.busInfo) info += ` 🚌 ${v.busInfo}`;
+            if (v.transitForced) info += ` ⚠️ *(Transporte Obrigatório: caminhada > 15 min)*`;
             return info;
           }).join('<br>');
           md += `| ${day} | ${names} | ${details} |\n`;
         } else {
-          md += `| ${day} | _Escritório (Peixoto Gomide)_ | - |\n`;
+          const reason = day === 'Segunda' 
+            ? '_Escritório Peixoto Gomide (Chegada de Rio Claro)_' 
+            : day === 'Sexta' 
+            ? '_Escritório Peixoto Gomide (Retorno para Interior)_' 
+            : '_Escritório Peixoto Gomide_';
+          md += `| ${day} | ${reason} | - |\n`;
         }
       });
       md += `\n`;
     });
-
-    md += `## 🏠 Recomendação de Moradia (Hub Estratégico)\n\n`;
-    md += `**Bairros Sugeridos:** ${res.housingRecommendation.topNeighborhoods.join(', ')}\n\n`;
-    md += `> ${res.housingRecommendation.centroidDescription}\n\n`;
-    md += `### Comparativo de Tempo\n`;
-    md += `- **Tempo Médio Sugerido:** ${res.housingRecommendation.comparison.suggestedAvgTime}\n`;
-    md += `- **Tempo Médio Atual:** ${res.housingRecommendation.comparison.currentAvgTime}\n\n`;
 
     md += `## 🚀 Resumo de Performance\n\n`;
     md += `${res.timeSavingsSummary}\n\n`;
@@ -357,6 +624,8 @@ const App: React.FC = () => {
     }
   };
 
+  const allWeekDays: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <header className="mb-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -366,7 +635,7 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">SP Route Optimizer</h1>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Expert Logistics Agent</p>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Expert Logistics & Housing Agent</p>
           </div>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
@@ -374,7 +643,7 @@ const App: React.FC = () => {
              <>
                <button 
                  onClick={handleDownloadMarkdown}
-                 className="px-6 py-3 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-2 shadow-sm"
+                 className="px-6 py-3 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-2 shadow-sm active:scale-95"
                >
                  <CodeBracketIcon className="h-5 w-5" />
                  GitHub Markdown
@@ -391,7 +660,7 @@ const App: React.FC = () => {
                </button>
              </>
            )}
-           <button onClick={() => setResult(null)} className="px-5 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50">
+           <button onClick={() => setResult(null)} className="px-5 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 active:scale-95">
              {result ? 'Novo Cálculo' : 'Limpar'}
            </button>
         </div>
@@ -401,56 +670,433 @@ const App: React.FC = () => {
         <main className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-500">
           <div className="space-y-6">
             {error && (
-              <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-sm font-medium">
-                {error}
+              <div className="p-5 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-sm font-medium flex items-start gap-3 shadow-sm">
+                <span className="text-xl">⚠️</span>
+                <div className="flex-1">
+                  <p className="font-bold">Aviso no Processamento</p>
+                  <p className="text-xs text-rose-600 mt-0.5">{error}</p>
+                </div>
               </div>
             )}
-            <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-              <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                <HomeIcon className="h-4 w-4 text-indigo-500" />
-                Base Residencial Atual
-              </h2>
-              <input
-                type="text"
-                value={currentAddress}
-                onChange={(e) => setCurrentAddress(e.target.value)}
-                placeholder="Ex: Próximo ao Metrô Santa Cruz, SP"
-                className="w-full px-5 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
-              />
+
+            {/* 1. Base Residencial Cadastrada */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <HomeIcon className="h-4 w-4 text-indigo-500" />
+                  Sua Residência Semanal em SP
+                </h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full uppercase border border-indigo-100 flex items-center gap-1">
+                    <CheckIcon className="h-3 w-3" />
+                    Marcado: Brigadeiro Luís Antônio 1649
+                  </span>
+                  {currentAddress !== DEFAULT_RESIDENCE && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrentAddress(DEFAULT_RESIDENCE)}
+                      className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 underline"
+                    >
+                      Restaurar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  value={currentAddress}
+                  onChange={(e) => setCurrentAddress(e.target.value)}
+                  placeholder="Ex: Av. Brigadeiro Luís Antônio, 1649, Bela Vista, São Paulo - SP"
+                  className="w-full pl-5 pr-12 py-3.5 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-semibold text-slate-800 text-sm bg-slate-50/50 focus:bg-white"
+                />
+                <button 
+                  type="button" 
+                  onClick={() => setCurrentAddress(DEFAULT_RESIDENCE)}
+                  title="Recarregar Brigadeiro Luís Antônio, 1649"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-600 p-1 rounded-lg"
+                >
+                  <HomeIcon className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between gap-3 text-xs text-slate-600">
+                <span>🏙️ <strong>Perfil Semanal:</strong> Residência de Segunda a Sexta em SP • Fins de semana em Rio Claro (RC)</span>
+              </div>
             </section>
 
-            <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-               <div className="flex items-center justify-between mb-6">
-                 <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+            {/* 2. Hub de Escritório Fixo (Peixoto Gomide) */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100">
+               <div className="flex items-center justify-between mb-4">
+                 <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                    <BuildingOfficeIcon className="h-4 w-4 text-emerald-500" />
                    Hub de Escritório (Fixo)
                  </h2>
-                 <span className="text-[10px] font-black bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md uppercase">Peixoto Gomide</span>
+                 <span className="text-[10px] font-black bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full uppercase border border-emerald-100">
+                   Peixoto Gomide
+                 </span>
                </div>
                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center gap-3">
-                 <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                   <MapPinIcon className="h-5 w-5 text-emerald-500" />
+                 <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm text-emerald-600">
+                   <BuildingOfficeIcon className="h-5 w-5" />
                  </div>
                  <div>
-                   <p className="text-xs font-bold text-slate-900 leading-none mb-1">Jardim Paulista / Bela Vista</p>
-                   <p className="text-[10px] text-slate-400 font-medium italic">Referência: Próximo ao Metrô Trianon-Masp</p>
+                   <p className="text-xs font-bold text-slate-900 leading-none mb-1">Rua Peixoto Gomide • Bela Vista / Jardim Paulista</p>
+                   <p className="text-[10px] text-slate-500 font-medium">Metrô Trianon-Masp (Linha 2-Verde) / Consolação (Linha 4-Amarela)</p>
                  </div>
                </div>
             </section>
 
-            <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-              <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                <TableCellsIcon className="h-4 w-4 text-indigo-500" />
-                Dados da Planilha (Colunas A a G)
-              </h2>
-              <textarea
-                value={rawInput}
-                onChange={(e) => setRawInput(e.target.value)}
-                placeholder="Cole aqui os dados da sua planilha de obras..."
-                className="w-full h-48 px-5 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs bg-slate-50 leading-relaxed"
-              />
+            {/* 3. NOVO: Parâmetros de Rotina Semanal e Dias de Visita */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <CalendarDaysIcon className="h-4 w-4 text-indigo-600" />
+                  <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest">
+                    Dias de Visitas & Ritmo Diário
+                  </h2>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={applyPresetRioClaro}
+                    className="px-2.5 py-1 text-[10px] font-black uppercase rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 active:scale-95 transition-all"
+                  >
+                    🚗 Rotina Rio Claro (Terça a Quinta)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyPresetFullWeek}
+                    className="px-2.5 py-1 text-[10px] font-bold uppercase rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-all"
+                  >
+                    Seg-Sex
+                  </button>
+                </div>
+              </div>
+
+              {/* Seletor visual de cada dia da semana */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-500 uppercase tracking-wider block">
+                  Selecione os dias em que deseja realizar visitas a campo:
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {allWeekDays.map(day => {
+                    const isAvailable = availableDays.includes(day);
+                    const isMonday = day === 'Segunda';
+                    const isFriday = day === 'Sexta';
+
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => handleToggleDay(day)}
+                        className={`p-3 rounded-2xl border text-center transition-all relative flex flex-col items-center justify-center gap-1 ${
+                          isAvailable
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100 active:scale-95'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span className="text-xs font-black">{day}</span>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          isAvailable ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-600'
+                        }`}>
+                          {isAvailable ? '🟢 Visitas' : '🏢 Escritório'}
+                        </span>
+                        {(isMonday || isFriday) && !isAvailable && (
+                          <span className="text-[8px] text-amber-700 font-bold block leading-none mt-0.5">
+                            {isMonday ? 'RC ➔ SP' : 'SP ➔ RC'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium italic">
+                  Dias marcados como "🏢 Escritório" serão reservados estritamente para trabalho interno na Peixoto Gomide (zero visitas de campo agendadas).
+                </p>
+              </div>
+
+              {/* Ritmo: Quantas obras por dia */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <label className="text-[11px] font-black text-slate-500 uppercase tracking-wider">
+                    Ritmo de Visitas por Dia:
+                  </label>
+                  <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
+                    {maxVisitsPerDay === 1 ? '1 Visita por dia' : `Até ${maxVisitsPerDay} Visitas por dia`}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMaxVisitsPerDay(1)}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-center ${
+                      maxVisitsPerDay === 1
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="block font-black">1 Visita / dia</span>
+                    <span className="text-[9px] text-slate-400 block">Foco & Detalhamento</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMaxVisitsPerDay(2)}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-center ${
+                      maxVisitsPerDay === 2
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="block font-black">Até 2 Visitas / dia</span>
+                    <span className="text-[9px] text-slate-400 block">Equilíbrio (Recomendado)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMaxVisitsPerDay(3)}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-center ${
+                      maxVisitsPerDay === 3
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="block font-black">Até 3 Visitas / dia</span>
+                    <span className="text-[9px] text-slate-400 block">Obras Próximas</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Detalhe da Rotina / Viagem */}
+              <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Contexto de Deslocamento Semanal (Rio Claro / Interior):
+                </label>
+                <input
+                  type="text"
+                  value={commuteNote}
+                  onChange={(e) => setCommuteNote(e.target.value)}
+                  placeholder="Descreva particularidades da sua viagem semanal..."
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-xs text-slate-700 bg-slate-50/50"
+                />
+              </div>
             </section>
 
+            {/* 4. Campo de Onde Morar (Análise Estratégica de Moradia) */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <SparklesIcon className="h-4 w-4 text-indigo-600" />
+                  <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest">
+                    Analisar Melhor Lugar Para Morar (Onde Morar)
+                  </h2>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <span className="text-[11px] font-bold text-slate-500">Ativar Análise</span>
+                  <input
+                    type="checkbox"
+                    checked={enableHousingAnalysis}
+                    onChange={(e) => setEnableHousingAnalysis(e.target.checked)}
+                    className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                </label>
+              </div>
+
+              {enableHousingAnalysis ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                    O agente calculará o centroide geográfico das obras cadastradas, a conectividade de transporte e o escritório na Peixoto Gomide para sugerir os melhores bairros:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setHousingPreference('balanced')}
+                      className={`p-3 rounded-2xl text-left border transition-all ${
+                        housingPreference === 'balanced'
+                          ? 'bg-indigo-50/80 border-indigo-400 ring-2 ring-indigo-200 text-indigo-900'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="block text-xs font-black">⚖️ Equilíbrio Total</span>
+                      <span className="text-[10px] text-slate-500 font-medium mt-0.5 block">Peixoto Gomide + Obras</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setHousingPreference('office')}
+                      className={`p-3 rounded-2xl text-left border transition-all ${
+                        housingPreference === 'office'
+                          ? 'bg-emerald-50/80 border-emerald-400 ring-2 ring-emerald-200 text-emerald-900'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="block text-xs font-black">🏢 Foco Escritório</span>
+                      <span className="text-[10px] text-slate-500 font-medium mt-0.5 block">Bela Vista / Jardins / Paulista</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setHousingPreference('works')}
+                      className={`p-3 rounded-2xl text-left border transition-all ${
+                        housingPreference === 'works'
+                          ? 'bg-amber-50/80 border-amber-400 ring-2 ring-amber-200 text-amber-900'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="block text-xs font-black">🏗️ Foco Obras</span>
+                      <span className="text-[10px] text-slate-500 font-medium mt-0.5 block">Menor tempo em campo</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 italic">Análise de moradia desativada para este cálculo.</p>
+              )}
+            </section>
+
+            {/* 5. Local para Enviar Planilhas (.xlsx, .xls, .csv, .tsv) */}
+            <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <TableCellsIcon className="h-4 w-4 text-indigo-500" />
+                  Planilha de Obras
+                </h2>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInputMode('upload')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      inputMode === 'upload' 
+                        ? 'bg-indigo-600 text-white shadow-sm' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    📁 Upload Arquivo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInputMode('text')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      inputMode === 'text' 
+                        ? 'bg-indigo-600 text-white shadow-sm' 
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    📝 Colar Texto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={loadSampleData}
+                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-all border border-indigo-100 flex items-center gap-1 active:scale-95"
+                  >
+                    ⚡ Exemplo
+                  </button>
+                </div>
+              </div>
+
+              {inputMode === 'upload' ? (
+                <div className="space-y-4">
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-indigo-200 hover:border-indigo-500 bg-indigo-50/20 hover:bg-indigo-50/50 p-8 rounded-3xl text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 group"
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".xlsx, .xls, .csv, .tsv, .txt"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-indigo-100 group-hover:scale-110 transition-transform">
+                      <ArrowUpTrayIcon className="h-8 w-8 text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-800">
+                        Clique para selecionar ou arraste sua planilha aqui
+                      </p>
+                      <p className="text-xs text-slate-500 font-medium mt-1">
+                        Formatos aceitos: <span className="font-bold text-indigo-700">.xlsx, .xls, .csv, .tsv</span>
+                      </p>
+                    </div>
+                    <div className="flex gap-2 flex-wrap justify-center mt-1">
+                      <span className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] font-bold border border-slate-200">Excel (.xlsx)</span>
+                      <span className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] font-bold border border-slate-200">Excel 97-2004 (.xls)</span>
+                      <span className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] font-bold border border-slate-200">CSV (.csv)</span>
+                      <span className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] font-bold border border-slate-200">TSV / Tab (.tsv)</span>
+                    </div>
+                  </div>
+
+                  {uploadedFileName && (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 overflow-hidden">
+                        <CheckCircleIcon className="h-5 w-5 text-emerald-600 shrink-0" />
+                        <span className="text-xs font-bold text-emerald-900 truncate">{uploadedFileName}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParsedSites([]);
+                          setUploadedFileName(null);
+                          setRawInput('');
+                        }}
+                        className="p-1 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-colors"
+                        title="Remover arquivo"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {parsedSites.length > 0 && (
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/50">
+                      <div className="px-4 py-2 bg-slate-100/80 border-b border-slate-200 flex justify-between items-center">
+                        <span className="text-[10px] font-black uppercase text-slate-600 tracking-wider">
+                          Prévia das Obras ({parsedSites.length} no total)
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-600">
+                          Colunas mapeadas: A-G
+                        </span>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 text-xs">
+                        {parsedSites.slice(0, 5).map((s, idx) => (
+                          <div key={idx} className="p-2.5 flex items-center justify-between gap-2 bg-white">
+                            <span className="font-bold text-slate-800 truncate">{s.nomeObra}</span>
+                            <span className="text-slate-500 text-[11px] truncate">{s.setor} - {s.cidade}</span>
+                          </div>
+                        ))}
+                        {parsedSites.length > 5 && (
+                          <div className="p-2 text-center text-[11px] font-bold text-slate-400 bg-slate-50">
+                            + {parsedSites.length - 5} obras prontas para roteirização
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <textarea
+                    value={rawInput}
+                    onChange={(e) => {
+                      setRawInput(e.target.value);
+                      setParsedSites([]);
+                      setUploadedFileName(null);
+                    }}
+                    placeholder="Cole aqui as linhas da sua planilha (Colunas A a G: Razão Social, Nome da Obra, Endereço, Bairro, Cidade, Estado, CEP)..."
+                    className="w-full h-48 px-5 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs bg-slate-50 leading-relaxed"
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    Suporta colagem direta do Excel ou Google Planilhas (separado por tabulação, vírgula ou ponto-e-vírgula).
+                  </p>
+                </div>
+              )}
+            </section>
+
+            {/* Botão de Análise */}
             <button
               onClick={handleRunAnalysis}
               disabled={loading}
@@ -459,7 +1105,7 @@ const App: React.FC = () => {
               }`}
             >
               {loading ? <ArrowPathIcon className="h-6 w-6 animate-spin" /> : <CheckCircleIcon className="h-6 w-6" />}
-              {loading ? 'Calculando Ciclo 1:2...' : 'Otimizar Ciclo Logístico'}
+              {loading ? 'Calculando Roteiro e Moradia...' : 'Otimizar Ciclo Logístico & Moradia'}
             </button>
           </div>
 
@@ -469,10 +1115,18 @@ const App: React.FC = () => {
                <div className="bg-indigo-50 p-6 rounded-full inline-block">
                  <MapIcon className="h-12 w-12 text-indigo-600" />
                </div>
-               <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub Misto</h3>
+               <h3 className="text-2xl font-black text-slate-800">Cálculo de Hub e Onde Morar</h3>
                <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
-                 O roteirizador agora considera o escritório na Peixoto Gomide como âncora principal para equilibrar sua moradia ideal entre obras e escritório.
+                 O roteirizador analisa o escritório na Peixoto Gomide, a sua base na <strong>Brigadeiro Luís Antônio, 1649</strong> e o centroide das obras para planejar visitas e apontar o local mais estratégico para moradia em São Paulo.
                </p>
+               <div className="pt-2 flex flex-col items-center gap-2">
+                 <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
+                   Rotina Semanal: Visitas Terça a Quinta • Segunda e Sexta no Escritório
+                 </span>
+                 <span className="text-[11px] font-semibold text-slate-400">
+                   Suporta arquivos .XLSX, .XLS, .CSV, .TSV
+                 </span>
+               </div>
              </div>
           </div>
         </main>
@@ -482,8 +1136,13 @@ const App: React.FC = () => {
         <div id="report-content" ref={reportRef} className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700 bg-slate-50 p-8 rounded-[40px] shadow-sm border border-slate-200">
           {/* Diagnostic Summary */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2">
-               <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-4">Estratégia de Ciclo Logístico (1/2)</h2>
+            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2 space-y-3">
+               <div className="flex items-center justify-between flex-wrap gap-2">
+                 <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Estratégia de Ciclo Logístico (1/2)</h2>
+                 <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md">
+                   Base: {currentAddress} (Seg a Sex)
+                 </span>
+               </div>
                <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
             </div>
             <div className="bg-indigo-600 p-8 rounded-3xl shadow-lg shadow-indigo-100 text-white flex flex-col justify-center text-center">
@@ -508,12 +1167,18 @@ const App: React.FC = () => {
              <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda: Mês de Auditoria (Visitas)</h3>
-                  <p className="text-slate-500 mt-2 font-medium italic">"Os dias livres indicam retorno obrigatório ao escritório fixo na Peixoto Gomide."</p>
+                  <p className="text-slate-500 mt-2 font-medium italic">
+                    "Visitas alocadas estritamente nos dias permitidos ({availableDays.join(', ')}). Segunda e Sexta dedicadas ao escritório fixo na Peixoto Gomide e deslocamento interiorano."
+                  </p>
                 </div>
                 <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100">
                    <div className="flex flex-col items-center border-r border-slate-200 pr-6">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Office Hub</span>
                      <span className="text-xs font-bold text-emerald-600 uppercase">Peixoto</span>
+                   </div>
+                   <div className="flex flex-col items-center border-r border-slate-200 pr-6">
+                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Ritmo Máximo</span>
+                     <span className="text-xs font-bold text-indigo-600 uppercase">{maxVisitsPerDay} Obra/dia</span>
                    </div>
                    <div className="flex flex-col items-center">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Metro</span>
@@ -530,14 +1195,31 @@ const App: React.FC = () => {
                        <div className="h-px bg-slate-100 flex-1"></div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                      {['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].map((dayName) => {
-                        const dayKey = dayName as keyof typeof week.schedule;
-                        const visits = week.schedule[dayKey] || [];
+                      {allWeekDays.map((dayName) => {
+                        const visits = week.schedule[dayName] || [];
                         const isMultiVisit = visits.length > 1;
+                        const isMonday = dayName === 'Segunda';
+                        const isFriday = dayName === 'Sexta';
+                        const isAllowed = availableDays.includes(dayName);
+
                         return (
                           <div key={dayName} className="space-y-4">
-                            <span className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-[0.3em] px-2 text-center md:text-left">{dayName}</span>
-                            <div className={`space-y-3 min-h-[140px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${isMultiVisit ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50/70 border-slate-200'}`}>
+                            <div className="flex items-center justify-between px-2">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{dayName}</span>
+                              {!isAllowed && (
+                                <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                                  Escritório
+                                </span>
+                              )}
+                            </div>
+
+                            <div className={`space-y-3 min-h-[150px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
+                              isMultiVisit 
+                                ? 'bg-indigo-50/50 border-indigo-200' 
+                                : !isAllowed 
+                                ? 'bg-slate-50/80 border-slate-200' 
+                                : 'bg-slate-50/70 border-slate-200'
+                            }`}>
                               {visits.length > 0 ? (
                                 <div className="space-y-3">
                                   {visits.map((visit, sIdx) => (
@@ -545,19 +1227,32 @@ const App: React.FC = () => {
                                       key={sIdx} 
                                       visit={visit} 
                                       isGrouped={isMultiVisit} 
-                                      onEdit={() => handleOpenEdit(wIdx, dayKey, sIdx, visit)}
+                                      onEdit={() => handleOpenEdit(wIdx, dayName, sIdx, visit)}
                                     />
                                   ))}
                                 </div>
                               ) : (
-                                <div className="h-full flex flex-col items-center justify-center py-8 opacity-30 group-hover/day:opacity-10 transition-opacity">
+                                <div className="h-full flex flex-col items-center justify-center py-6 px-2 text-center space-y-1 opacity-80 group-hover/day:opacity-100 transition-opacity">
                                    <BuildingOfficeIcon className="h-6 w-6 text-slate-400 mb-1" />
-                                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center">Escritório</span>
+                                   <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Escritório Peixoto Gomide</span>
+                                   {isMonday && (
+                                     <span className="text-[8px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                                       🚗 Chegada de Rio Claro
+                                     </span>
+                                   )}
+                                   {isFriday && (
+                                     <span className="text-[8px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                       🚗 Retorno ao Interior
+                                     </span>
+                                   )}
+                                   {!isMonday && !isFriday && (
+                                     <span className="text-[8px] text-slate-400 font-semibold">Dia de trabalho interno</span>
+                                   )}
                                 </div>
                               )}
                               
                               <button
-                                onClick={() => handleOpenAdd(wIdx, dayKey)}
+                                onClick={() => handleOpenAdd(wIdx, dayName)}
                                 className="w-full py-1.5 px-2 bg-indigo-50 hover:bg-emerald-50 text-indigo-700 hover:text-emerald-700 rounded-xl text-[9px] font-black border border-indigo-100 border-dashed transition-all opacity-0 group-hover/day:opacity-100 focus:opacity-100 flex items-center justify-center gap-1 active:scale-95"
                               >
                                 <span>+ Adicionar Obra</span>
@@ -575,35 +1270,68 @@ const App: React.FC = () => {
              </div>
           </section>
 
-          {/* Housing Strategy Insight */}
+          {/* Housing Strategy Insight - "Onde Morar em SP" */}
           <section className="bg-[#0f172a] rounded-[50px] p-12 text-white flex flex-col lg:flex-row gap-12 items-center relative overflow-hidden shadow-2xl">
              <div className="absolute bottom-0 right-0 w-80 h-80 bg-emerald-500/10 blur-[120px] rounded-full"></div>
              <div className="flex-1 space-y-8 relative z-10">
                 <div>
-                   <h3 className="text-4xl font-black mb-3 tracking-tight">Estratégia de Hub Misto</h3>
-                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">Localizações ideais equilibrando Peixoto Gomide + Obras:</p>
+                   <div className="flex items-center gap-2 mb-2">
+                     <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase rounded-lg border border-emerald-500/30">
+                       Análise Estratégica de Moradia
+                     </span>
+                     <span className="text-slate-400 text-xs font-semibold">
+                       Base Atual: {currentAddress}
+                     </span>
+                   </div>
+                   <h3 className="text-4xl font-black mb-3 tracking-tight">Melhor Lugar para Morar</h3>
+                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">
+                     Bairros recomendados que equilibram o escritório na Peixoto Gomide, as obras e a rota para o interior:
+                   </p>
                 </div>
                 <div className="flex flex-wrap gap-4">
                    {result.housingRecommendation.topNeighborhoods.map(b => (
-                     <span key={b} className="px-8 py-5 bg-white/5 rounded-3xl font-black text-xl border border-white/10 hover:bg-white/15 transition-all cursor-default shadow-sm">{b}</span>
+                     <span key={b} className="px-8 py-5 bg-white/5 rounded-3xl font-black text-xl border border-white/10 hover:bg-white/15 transition-all cursor-default shadow-sm text-emerald-300">
+                       {b}
+                     </span>
                    ))}
                 </div>
-                <p className="text-slate-400 text-sm leading-relaxed max-w-2xl font-medium italic">
-                  "{result.housingRecommendation.centroidDescription}"
-                </p>
+                <div className="bg-white/5 p-6 rounded-2xl border border-white/10 space-y-2">
+                  <p className="text-slate-300 text-sm leading-relaxed font-medium">
+                    "{result.housingRecommendation.centroidDescription}"
+                  </p>
+                  <p className="text-xs text-indigo-300 font-semibold italic">
+                    ℹ️ Sua residência na Brigadeiro Luís Antônio 1649 (Bela Vista) é excelente para a rotina semanal de segunda a sexta: acesso expresso ao escritório da Peixoto Gomide (~8 a 12 min) e saída rápida para o Corredor Norte-Sul / Rodovias Bandeirantes e Anhanguera no trajeto para Rio Claro.
+                  </p>
+                </div>
              </div>
              <div className="w-full lg:w-[420px] bg-white p-10 rounded-[40px] text-slate-900 shadow-2xl relative z-10 border border-slate-100">
-                <div className="space-y-10">
+                <div className="space-y-8">
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tempo Médio Viagem</span>
-                      <span className="text-6xl font-black text-indigo-600 tabular-nums tracking-tighter">{result.housingRecommendation.comparison.suggestedAvgTime}</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tempo Médio Sugerido</span>
+                      <span className="text-5xl font-black text-indigo-600 tabular-nums tracking-tighter">
+                        {result.housingRecommendation.comparison.suggestedAvgTime}
+                      </span>
                     </div>
-                    <div className="bg-emerald-100 text-emerald-700 px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200">Otimizado</div>
+                    <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200">
+                      Otimizado
+                    </div>
                   </div>
-                  <div className="pt-8 border-t border-slate-100 space-y-3">
+
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500 font-bold">Tempo Médio Atual:</span>
+                      <span className="font-black text-slate-800">{result.housingRecommendation.comparison.currentAvgTime}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500 font-bold">Economia Mensal Estimada:</span>
+                      <span className="font-black text-emerald-600">{result.housingRecommendation.comparison.monthlySavings}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 space-y-2">
                      <p className="text-xs text-slate-600 font-bold leading-relaxed italic">
-                       "O bairro Paraíso/Ana Rosa mantém você a menos de 10 min da Peixoto Gomide e conectado a todos os eixos de obras."
+                       "Os eixos Paraíso, Ana Rosa e Bela Vista conectam as Linhas 1-Azul e 2-Verde, minimizando baldeações e garantindo acesso expresso tanto ao escritório quanto aos clusters de obras."
                      </p>
                   </div>
                 </div>
@@ -626,7 +1354,7 @@ const App: React.FC = () => {
       
       {!result && (
         <footer className="mt-20 py-10 border-t border-slate-100 text-center">
-           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic tracking-[0.3em]">SP Route Optimizer • Logística de Auditoria Técnica • 2025</p>
+           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest italic tracking-[0.3em]">SP Route Optimizer • Logística & Moradia SP • 2025</p>
         </footer>
       )}
 
@@ -698,9 +1426,34 @@ const App: React.FC = () => {
                   className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                 />
                 {editingVisit.visit.walkingMinutes !== undefined && editingVisit.visit.walkingMinutes > 15 && (
-                  <p className="text-[10px] text-amber-600 font-bold leading-tight">
-                    ⚠️ Atenção: Caminhada acima de 15 minutos! Por favor, considere adicionar um transporte complementar no campo abaixo para segurança e facilidade.
-                  </p>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 mt-2">
+                    <p className="text-[11px] text-amber-800 font-bold leading-tight flex items-start gap-1">
+                      <span className="text-sm leading-none">⚠️</span>
+                      <span>
+                        Caminhada acima de 15 minutos ({editingVisit.visit.walkingMinutes} min)! O sistema exige transporte público (ônibus SPTrans ou metrô). Ao salvar ou clicar abaixo, o deslocamento é convertido automaticamente.
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setEditingVisit({
+                        ...editingVisit,
+                        visit: {
+                          ...editingVisit.visit,
+                          transitForced: true,
+                          originalWalkingMinutes: editingVisit.visit.walkingMinutes,
+                          busInfo: editingVisit.visit.busInfo && !editingVisit.visit.busInfo.toLowerCase().includes('nulo')
+                            ? editingVisit.visit.busInfo
+                            : (editingVisit.visit.metroLine 
+                                ? `Ônibus SPTrans Integrado / Conexão ${editingVisit.visit.metroLine}` 
+                                : 'Ônibus SPTrans / Metrô - Linha Integrada'),
+                          walkingMinutes: 8
+                        }
+                      })}
+                      className="w-full py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[10px] font-black uppercase rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <span>🚌 Converter para Transporte Público (8 min a pé residual)</span>
+                    </button>
+                  </div>
                 )}
               </div>
 

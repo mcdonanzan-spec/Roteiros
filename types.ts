@@ -15,6 +15,8 @@ export interface VisitDetail {
   busInfo?: string;
   walkingMinutes?: number;
   isFullTurn: boolean;
+  transitForced?: boolean;
+  originalWalkingMinutes?: number;
 }
 
 export interface Cluster {
@@ -63,4 +65,11 @@ export interface AnalysisResult {
   weeklyRoute: DayRoute[];
   monthlyAgenda: MonthAgenda[];
   timeSavingsSummary: string;
+}
+
+export interface SchedulePreferences {
+  availableDays: ('Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta')[];
+  maxVisitsPerDay: 1 | 2 | 3;
+  commuteNote?: string;
+  housingPreference?: 'balanced' | 'office' | 'works';
 }
