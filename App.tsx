@@ -183,12 +183,12 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
         isGrouped ? 'border-indigo-200 border-l-4 border-l-indigo-500' : 'border-slate-200 shadow-sm'
       } ${isWalkingOverLimit ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
     >
-      <div className="flex justify-between items-start mb-2 gap-2 pr-4 min-h-[30px]">
-        <span className="site-name-title text-xs font-black text-slate-900 leading-snug pt-0.5 pb-0.5 group-hover:text-indigo-600 transition-colors uppercase break-words whitespace-normal block">
+      <div className="flex justify-between items-start mb-2 gap-2 pr-4 min-h-[32px]">
+        <span className="site-name-title text-xs font-black text-slate-900 leading-normal pt-1 pb-0.5 group-hover:text-indigo-600 transition-colors uppercase break-words whitespace-normal block">
           {visit.siteName}
         </span>
         {visit.isFullTurn && (
-          <span className="shrink-0 px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase border border-rose-100 mt-0.5">Integral</span>
+          <span className="shrink-0 px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase border border-rose-100 mt-1">Integral</span>
         )}
       </div>
 
