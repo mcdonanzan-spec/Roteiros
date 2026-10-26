@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         body { 
             font-family: 'Inter', sans-serif; 
@@ -24,16 +24,35 @@
         /* Estilos para o modo de exportação de PDF */
         .pdf-export-mode {
             background-color: white !important;
-            padding: 20px !important;
+            padding: 30px !important;
             width: 1000px !important; /* Largura ideal para A4 */
+            box-sizing: border-box !important;
         }
         
-        .pdf-export-mode shadow-sm, 
-        .pdf-export-mode shadow-lg, 
-        .pdf-export-mode shadow-xl, 
-        .pdf-export-mode shadow-2xl {
+        .pdf-export-mode .shadow-sm, 
+        .pdf-export-mode .shadow-md, 
+        .pdf-export-mode .shadow-lg, 
+        .pdf-export-mode .shadow-xl, 
+        .pdf-export-mode .shadow-2xl {
             box-shadow: none !important;
             border: 1px solid #e2e8f0 !important;
+        }
+
+        .pdf-export-mode #pdf-page-1,
+        .pdf-export-mode #pdf-page-2,
+        .pdf-export-mode #pdf-page-3,
+        .pdf-export-mode #pdf-page-4 {
+            overflow: visible !important;
+        }
+
+        .pdf-export-mode .site-name-title {
+            white-space: normal !important;
+            overflow: visible !important;
+            word-break: break-word !important;
+            line-height: 1.35 !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+            display: block !important;
         }
 
         @media print {
@@ -42,7 +61,6 @@
             body { background: white; }
         }
     </style>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body>
     <div id="root"></div>

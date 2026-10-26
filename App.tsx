@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences } from './types';
-import { analyzeLogistics, validateAndEnforceTransit } from './services/geminiService';
+import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences, CalendarEvent } from './types';
+import { analyzeLogistics, validateAndEnforceTransit, normalizeSiteKey } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
+import { CalendarEventManager } from './components/CalendarEventManager';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -62,8 +63,16 @@ export const getDayOfWeekName = (dateStr: string): string => {
 export const getCalendarDateForDay = (
   startDateStr: string, 
   weekIdx: number, 
-  dayName: DayOfWeek
-): { dateFormatted: string; fullDateStr: string; isBeforeStart: boolean; holidayName?: string } => {
+  dayName: DayOfWeek,
+  customEvents: CalendarEvent[] = []
+): { 
+  dateFormatted: string; 
+  fullDateStr: string; 
+  isBeforeStart: boolean; 
+  holidayName?: string;
+  customEvent?: CalendarEvent;
+  isBlockedByEvent: boolean;
+} => {
   const parts = startDateStr.split('-').map(Number);
   const startYear = parts[0] || 2026;
   const startMonth = (parts[1] || 11) - 1;
@@ -98,31 +107,46 @@ export const getCalendarDateForDay = (
 
   const dateFormatted = `${dayNum}/${monthNum}`;
   const fullDateStr = `${dayNum}/${monthNum}/${yearNum}`;
+  const isoDateStr = `${yearNum}-${monthNum}-${dayNum}`;
 
   const isBeforeStart = targetDate.getTime() < startDateObj.getTime();
 
+  // Busca se há evento personalizado cadastrado para a data
+  const customEvent = customEvents.find(e => 
+    e.dateStr === isoDateStr || 
+    e.dateStr === fullDateStr || 
+    e.dateStr === dateFormatted || 
+    e.dateStr.endsWith(dateFormatted)
+  );
+
   const holidayKey = `${dayNum}/${monthNum}`;
-  const holidays: Record<string, string> = {
+  const defaultHolidays: Record<string, string> = {
     '02/11': 'Finados',
-    '15/11': 'Proclamação da República',
+    '15/11': 'Evento da Unitá',
+    '19/11': 'Feriado Municipal / Ponte',
     '20/11': 'Consciência Negra',
     '25/12': 'Natal',
     '01/01': 'Ano Novo',
     '25/01': 'Aniv. São Paulo'
   };
-  const holidayName = holidays[holidayKey];
+  const holidayName = customEvent?.title || defaultHolidays[holidayKey];
+  const isBlockedByEvent = customEvent 
+    ? customEvent.blockVisits 
+    : (holidayKey === '02/11' || holidayKey === '15/11' || holidayKey === '19/11' || holidayKey === '20/11');
 
   return {
     dateFormatted,
     fullDateStr,
     isBeforeStart,
-    holidayName
+    holidayName,
+    customEvent,
+    isBlockedByEvent
   };
 };
 
-export const getWeekRangeFormatted = (startDateStr: string, weekIdx: number): string => {
-  const seg = getCalendarDateForDay(startDateStr, weekIdx, 'Segunda');
-  const sex = getCalendarDateForDay(startDateStr, weekIdx, 'Sexta');
+export const getWeekRangeFormatted = (startDateStr: string, weekIdx: number, customEvents: CalendarEvent[] = []): string => {
+  const seg = getCalendarDateForDay(startDateStr, weekIdx, 'Segunda', customEvents);
+  const sex = getCalendarDateForDay(startDateStr, weekIdx, 'Sexta', customEvents);
   return `${seg.dateFormatted} a ${sex.dateFormatted}/${seg.fullDateStr.split('/')[2]}`;
 };
 
@@ -155,16 +179,16 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
   return (
     <div 
       onClick={onEdit}
-      className={`p-4 bg-white rounded-2xl border transition-all group overflow-hidden cursor-pointer hover:border-indigo-400 hover:shadow-md hover:scale-[1.01] relative ${
+      className={`p-3.5 bg-white rounded-2xl border transition-all group cursor-pointer hover:border-indigo-400 hover:shadow-md hover:scale-[1.01] relative ${
         isGrouped ? 'border-indigo-200 border-l-4 border-l-indigo-500' : 'border-slate-200 shadow-sm'
       } ${isWalkingOverLimit ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
     >
-      <div className="flex justify-between items-start mb-2 gap-2 pr-4">
-        <span className="text-[11px] font-black text-slate-900 leading-tight group-hover:text-indigo-600 transition-colors uppercase truncate">
+      <div className="flex justify-between items-start mb-2 gap-2 pr-4 min-h-[30px]">
+        <span className="site-name-title text-xs font-black text-slate-900 leading-snug pt-0.5 pb-0.5 group-hover:text-indigo-600 transition-colors uppercase break-words whitespace-normal block">
           {visit.siteName}
         </span>
         {visit.isFullTurn && (
-          <span className="shrink-0 px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase border border-rose-100">Integral</span>
+          <span className="shrink-0 px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase border border-rose-100 mt-0.5">Integral</span>
         )}
       </div>
 
@@ -175,7 +199,7 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
       </div>
       
       {visit.metroLine && (
-        <div className={`text-[9px] font-black px-2.5 py-1 rounded-full inline-block mb-2 shadow-sm ${getMetroStyle(visit.metroLine)}`}>
+        <div className={`text-[9px] font-black px-2.5 py-1 rounded-full inline-block mb-2 shadow-sm whitespace-normal leading-snug break-words ${getMetroStyle(visit.metroLine)}`}>
           {visit.metroLine}
         </div>
       )}
@@ -183,7 +207,7 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
       <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
         {visit.walkingMinutes !== undefined && (
           <div className="flex items-center gap-1.5 text-slate-600 flex-wrap">
-            <ClockIcon className="h-3 w-3 text-slate-400" />
+            <ClockIcon className="h-3 w-3 text-slate-400 shrink-0" />
             <span className="text-[10px] font-bold">Caminhada: <span className="text-slate-900">{visit.walkingMinutes} min</span></span>
             {isWalkingOverLimit && (
               <span className="px-1 py-0.5 bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black rounded uppercase animate-pulse">
@@ -199,9 +223,9 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
           </div>
         )}
         {visit.busInfo && (
-          <div className="flex items-center gap-1.5 text-slate-500">
-            <TruckIcon className="h-3 w-3 text-indigo-500 shrink-0" />
-            <span className="text-[9px] font-semibold italic truncate leading-none">{visit.busInfo}</span>
+          <div className="flex items-start gap-1.5 text-slate-500">
+            <TruckIcon className="h-3 w-3 text-indigo-500 shrink-0 mt-0.5" />
+            <span className="text-[9px] font-semibold italic break-words leading-tight text-slate-600">{visit.busInfo}</span>
           </div>
         )}
       </div>
@@ -219,6 +243,42 @@ const App: React.FC = () => {
   
   // Data de Início das Visitas (Padrão: 03/11/2026 - Novembro/2026)
   const [startDate, setStartDate] = useState('2026-11-03');
+
+  // Eventos do Calendário, Eventos da Unitá e Feriados Bloqueados
+  const [customEvents, setCustomEvents] = useState<CalendarEvent[]>([
+    {
+      id: 'evt-unita-1511',
+      dateStr: '2026-11-15',
+      title: 'Evento da Unitá',
+      type: 'company',
+      blockVisits: true,
+      notes: 'Evento Corporativo Unitá Engenharia (Dia sem visitas)'
+    },
+    {
+      id: 'evt-feriado-1911',
+      dateStr: '2026-11-19',
+      title: 'Feriado Municipal / Ponte',
+      type: 'bridge',
+      blockVisits: true,
+      notes: 'Feriado / Emenda de Calendário'
+    },
+    {
+      id: 'evt-consciencia-2011',
+      dateStr: '2026-11-20',
+      title: 'Consciência Negra',
+      type: 'holiday',
+      blockVisits: true,
+      notes: 'Feriado Nacional'
+    },
+    {
+      id: 'evt-finados-0211',
+      dateStr: '2026-11-02',
+      title: 'Finados',
+      type: 'holiday',
+      blockVisits: true,
+      notes: 'Feriado Nacional'
+    }
+  ]);
 
   // Parâmetros de Rotina & Dias de Visita
   const [availableDays, setAvailableDays] = useState<DayOfWeek[]>([
@@ -249,6 +309,46 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // Estatísticas da agenda mensal e controle de unicidade de obras (1 visita por obra no mês)
+  const scheduleStats = useMemo(() => {
+    if (!result || !result.monthlyAgenda) return null;
+    let totalVisits = 0;
+    const visitedSet = new Set<string>();
+    const siteToLocationMap = new Map<string, { weekIdx: number; dayName: DayOfWeek }>();
+    let lastVisitWeek = -1;
+    let lastVisitDayIdx = -1;
+
+    const dayOrder: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+
+    result.monthlyAgenda.forEach((week, wIdx) => {
+      dayOrder.forEach((dayName, dIdx) => {
+        const vList = week.schedule[dayName] || [];
+        if (vList.length > 0) {
+          totalVisits += vList.length;
+          vList.forEach(v => {
+            if (v && v.siteName) {
+              const k = normalizeSiteKey(v.siteName);
+              visitedSet.add(k);
+              if (!siteToLocationMap.has(k)) {
+                siteToLocationMap.set(k, { weekIdx: wIdx, dayName });
+              }
+            }
+          });
+          lastVisitWeek = wIdx;
+          lastVisitDayIdx = dIdx;
+        }
+      });
+    });
+
+    return {
+      totalVisits,
+      uniqueSitesCount: visitedSet.size,
+      lastVisitWeek,
+      lastVisitDayIdx,
+      siteToLocationMap
+    };
+  }, [result]);
 
   // Alternar dia disponível para visitas
   const handleToggleDay = (day: DayOfWeek) => {
@@ -602,7 +702,8 @@ const App: React.FC = () => {
           maxVisitsPerDay,
           commuteNote,
           startDate,
-          housingPreference: enableHousingAnalysis ? housingPreference : 'balanced'
+          housingPreference: enableHousingAnalysis ? housingPreference : 'balanced',
+          customEvents
         }
       );
       setResult(data);
@@ -628,7 +729,8 @@ const App: React.FC = () => {
     md += `- **Data Inicial das Visitas:** ${formatDisplayDate(startDate)} (${getDayOfWeekName(startDate)}-feira)\n`;
     md += `- **Dias com Visitas de Campo:** ${availableDays.join(', ')}\n`;
     md += `- **Dias Fixo no Escritório:** ${['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'].filter(d => !availableDays.includes(d as DayOfWeek)).join(', ') || 'Nenhum'}\n`;
-    md += `- **Ritmo Máximo Diário:** Até ${maxVisitsPerDay} visita(s) por dia\n\n`;
+    md += `- **Ritmo Máximo Diário:** Até ${maxVisitsPerDay} visita(s) por dia\n`;
+    md += `- **Regra de Unicidade:** 1 visita por obra no mês (Sem repetições - Ciclo concluído ao visitar todas as obras)\n\n`;
 
     md += `## 🩺 Diagnóstico Estratégico\n\n`;
     md += `"${res.diagnosis}"\n\n`;
@@ -639,7 +741,12 @@ const App: React.FC = () => {
 
     md += `### 📊 Impacto Mensal\n`;
     md += `- **Economia Mensal:** ${res.housingRecommendation.comparison.monthlySavings}\n`;
-    md += `- **Eficiência Atual:** ${res.currentEvaluation.efficiency}\n\n`;
+    md += `- **Eficiência Atual:** ${res.currentEvaluation.efficiency}\n`;
+    if (scheduleStats) {
+      md += `- **Total de Visitas Agendadas:** ${scheduleStats.totalVisits} visitas (${scheduleStats.uniqueSitesCount} obras únicas, 0 duplicatas)\n\n`;
+    } else {
+      md += `\n`;
+    }
 
     md += `## 🏠 Recomendação de Moradia (Onde Morar em SP)\n\n`;
     md += `**Bairros Estratégicos:** ${res.housingRecommendation.topNeighborhoods.join(', ')}\n\n`;
@@ -656,10 +763,13 @@ const App: React.FC = () => {
       md += `| :--- | :--- | :--- |\n`;
       
       const days: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
-      days.forEach(day => {
-        const cal = getCalendarDateForDay(startDate, wIdx, day);
+      days.forEach((day, dIdx) => {
+        const cal = getCalendarDateForDay(startDate, wIdx, day, customEvents);
         const visits = week.schedule[day];
-        const dayHeader = `${day} (${cal.dateFormatted})${cal.holidayName ? ` [Feriado: ${cal.holidayName}]` : ''}`;
+        const eventTag = cal.customEvent 
+          ? ` [${cal.customEvent.type === 'company' ? 'Evento Unitá' : 'Feriado'}: ${cal.customEvent.title}]` 
+          : (cal.holidayName ? ` [Feriado: ${cal.holidayName}]` : '');
+        const dayHeader = `${day} (${cal.dateFormatted})${eventTag}`;
 
         if (visits && visits.length > 0) {
           const names = visits.map(v => `**${v.siteName}**${v.isFullTurn ? ' (Integral)' : ''}`).join('<br>');
@@ -672,10 +782,18 @@ const App: React.FC = () => {
           }).join('<br>');
           md += `| ${dayHeader} | ${names} | ${details} |\n`;
         } else {
-          const reason = day === 'Segunda' 
+          const isAfter = scheduleStats !== null && (
+            wIdx > scheduleStats.lastVisitWeek ||
+            (wIdx === scheduleStats.lastVisitWeek && dIdx > scheduleStats.lastVisitDayIdx)
+          );
+          const reason = cal.customEvent
+            ? `_${cal.customEvent.type === 'company' ? '🏢 Evento da Unitá' : '🏖️ Feriado'}: ${cal.customEvent.title} (Sem visitas de campo)_`
+            : day === 'Segunda' 
             ? '_Escritório Peixoto Gomide (Chegada de Rio Claro)_' 
             : day === 'Sexta' 
             ? '_Escritório Peixoto Gomide (Retorno para Interior)_' 
+            : isAfter
+            ? '🎉 _Escritório Peixoto Gomide (Ciclo de visitas concluído)_'
             : '_Escritório Peixoto Gomide_';
           md += `| ${dayHeader} | ${reason} | - |\n`;
         }
@@ -705,46 +823,90 @@ const App: React.FC = () => {
   const handleDownloadPDF = async () => {
     if (!reportRef.current) return;
     setExporting(true);
-    await new Promise(r => setTimeout(r, 100));
+    if (document.fonts) {
+      await document.fonts.ready;
+    }
+    await new Promise(r => setTimeout(r, 200));
     try {
       const element = reportRef.current;
       const originalWidth = element.style.width;
       const originalPadding = element.style.padding;
       element.classList.add('pdf-export-mode');
-      element.style.width = '1000px'; 
-      element.style.padding = '40px';
-      const canvas = await html2canvas(element, {
-        scale: 3,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        width: 1000,
-        height: element.scrollHeight,
-        windowWidth: 1000
-      });
+      element.style.width = '1020px';
+      element.style.padding = '25px';
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+      const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
+      const margin = 8;
+      const printWidth = pdfWidth - margin * 2; // 194mm
+      const printHeight = pdfHeight - margin * 2; // 281mm
+
+      const page1 = document.getElementById('pdf-page-1');
+      const page2 = document.getElementById('pdf-page-2');
+      const page3 = document.getElementById('pdf-page-3');
+      const page4 = document.getElementById('pdf-page-4');
+
+      const pagesToRender: HTMLElement[] = [];
+      if (page1) pagesToRender.push(page1);
+      if (page2) pagesToRender.push(page2);
+      if (page3) pagesToRender.push(page3);
+      if (page4) pagesToRender.push(page4);
+
+      if (pagesToRender.length > 0) {
+        for (let i = 0; i < pagesToRender.length; i++) {
+          const pageElem = pagesToRender[i];
+          const canvas = await html2canvas(pageElem, {
+            scale: 2.2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: 1020
+          });
+
+          const imgData = canvas.toDataURL('image/jpeg', 0.96);
+          const rawHeight = (canvas.height * printWidth) / canvas.width;
+          const scaleFactor = rawHeight > printHeight ? printHeight / rawHeight : 1;
+          const finalW = printWidth * scaleFactor;
+          const finalH = rawHeight * scaleFactor;
+          const finalX = margin + (printWidth - finalW) / 2;
+          const finalY = margin + (printHeight - finalH) / 2;
+
+          if (i > 0) pdf.addPage();
+          pdf.addImage(imgData, 'JPEG', finalX, finalY, finalW, finalH, undefined, 'FAST');
+        }
+      } else {
+        const canvas = await html2canvas(element, {
+          scale: 2.2,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          width: 1020,
+          windowWidth: 1020
+        });
+        const imgData = canvas.toDataURL('image/jpeg', 0.96);
+        const imgWidth = pdfWidth;
+        const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+        let heightLeft = imgHeight;
+        let position = 0;
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pdfHeight;
+        while (heightLeft > 0) {
+          position = heightLeft - imgHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+          heightLeft -= pdfHeight;
+        }
+      }
+
       element.classList.remove('pdf-export-mode');
       element.style.width = originalWidth;
       element.style.padding = originalPadding;
-      const imgData = canvas.toDataURL('image/jpeg', 0.98);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pdfHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pdfHeight;
-      }
+
       const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
       pdf.save(`Plano_Estrategico_Novembro_${dateStr}.pdf`);
     } catch (err) {
-      console.error(err);
+      console.error("Erro ao gerar PDF:", err);
       alert("Erro ao processar o arquivo PDF.");
     } finally {
       setExporting(false);
@@ -752,6 +914,165 @@ const App: React.FC = () => {
   };
 
   const allWeekDays: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+
+  const renderWeekBlock = (week: MonthAgenda, wIdx: number) => {
+    return (
+      <div key={wIdx} className="page-break-inside-avoid">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <span className="px-5 py-2 bg-slate-900 text-white rounded-2xl text-xs font-black tracking-[0.2em] uppercase">
+              Semana {week.week}
+            </span>
+            <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100">
+              🗓️ {getWeekRangeFormatted(startDate, wIdx)}
+            </span>
+          </div>
+          <div className="h-px bg-slate-100 flex-1 ml-4 hidden sm:block"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {allWeekDays.map((dayName, dIdx) => {
+            const visits = week.schedule[dayName] || [];
+            const isMultiVisit = visits.length > 1;
+            const isMonday = dayName === 'Segunda';
+            const isFriday = dayName === 'Sexta';
+            const isAllowed = availableDays.includes(dayName);
+            const cal = getCalendarDateForDay(startDate, wIdx, dayName, customEvents);
+            const isAfterAllVisitsFinished = scheduleStats !== null && (
+              wIdx > scheduleStats.lastVisitWeek ||
+              (wIdx === scheduleStats.lastVisitWeek && dIdx > scheduleStats.lastVisitDayIdx)
+            );
+
+            return (
+              <div key={dayName} className="space-y-3">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-wider">{dayName}</span>
+                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                      {cal.dateFormatted}
+                    </span>
+                  </div>
+                  {cal.customEvent ? (
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border ${
+                      cal.customEvent.type === 'company'
+                        ? 'text-purple-800 bg-purple-50 border-purple-200'
+                        : cal.customEvent.type === 'bridge'
+                        ? 'text-amber-800 bg-amber-50 border-amber-200'
+                        : 'text-rose-700 bg-rose-50 border-rose-200'
+                    }`}>
+                      {cal.customEvent.type === 'company' ? '🏢 ' : cal.customEvent.type === 'bridge' ? '🌉 ' : '🏖️ '}
+                      {cal.customEvent.title}
+                    </span>
+                  ) : cal.holidayName ? (
+                    <span className="text-[8px] font-black uppercase text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                      {cal.holidayName}
+                    </span>
+                  ) : null}
+                  {cal.isBeforeStart && !cal.holidayName && !cal.customEvent && (
+                    <span className="text-[8px] font-black uppercase text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                      Pré-Início
+                    </span>
+                  )}
+                  {!isAllowed && !cal.holidayName && !cal.customEvent && !cal.isBeforeStart && (
+                    <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                      Escritório
+                    </span>
+                  )}
+                  {isAllowed && visits.length === 0 && isAfterAllVisitsFinished && !cal.holidayName && !cal.customEvent && !cal.isBeforeStart && (
+                    <span className="text-[8px] font-black uppercase text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Concluído
+                    </span>
+                  )}
+                </div>
+
+                <div className={`space-y-3 min-h-[160px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
+                  isMultiVisit 
+                    ? 'bg-indigo-50/50 border-indigo-200' 
+                    : cal.customEvent?.blockVisits
+                    ? 'bg-purple-50/50 border-purple-200'
+                    : cal.isBeforeStart
+                    ? 'bg-slate-100/60 border-slate-200'
+                    : !isAllowed 
+                    ? 'bg-slate-50/80 border-slate-200' 
+                    : isAfterAllVisitsFinished && visits.length === 0
+                    ? 'bg-emerald-50/30 border-emerald-200/60'
+                    : 'bg-slate-50/70 border-slate-200'
+                }`}>
+                  {visits.length > 0 ? (
+                    <div className="space-y-3">
+                      {visits.map((visit, sIdx) => (
+                        <VisitCard 
+                          key={sIdx} 
+                          visit={visit} 
+                          isGrouped={isMultiVisit} 
+                          onEdit={() => handleOpenEdit(wIdx, dayName, sIdx, visit)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center py-6 px-2 text-center space-y-1 opacity-85 group-hover/day:opacity-100 transition-opacity">
+                      <BuildingOfficeIcon className={`h-6 w-6 mb-1 ${
+                        cal.customEvent?.type === 'company' 
+                          ? 'text-purple-500' 
+                          : isAfterAllVisitsFinished && !isMonday && !isFriday && !cal.holidayName && !cal.isBeforeStart 
+                          ? 'text-emerald-500' 
+                          : 'text-slate-400'
+                      }`} />
+                      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">
+                        {cal.customEvent?.type === 'company' ? 'Evento Unitá / Escritório' : 'Escritório Peixoto Gomide'}
+                      </span>
+                      {isMonday && (
+                        <span className="text-[8px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                          🚗 Chegada de Rio Claro
+                        </span>
+                      )}
+                      {isFriday && (
+                        <span className="text-[8px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                          🚗 Retorno ao Interior
+                        </span>
+                      )}
+                      {cal.customEvent && (
+                        <span className="text-[8px] font-black text-purple-800 bg-purple-100 px-2 py-0.5 rounded border border-purple-200">
+                          {cal.customEvent.type === 'company' ? '🏢 ' : '🏖️ '}{cal.customEvent.title}
+                        </span>
+                      )}
+                      {cal.holidayName && !cal.customEvent && (
+                        <span className="text-[8px] font-black text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                          Feriado ({cal.holidayName})
+                        </span>
+                      )}
+                      {cal.isBeforeStart && (
+                        <span className="text-[8px] font-semibold text-slate-400">
+                          Visitas iniciam em {formatDisplayDateShort(startDate)} ({getDayOfWeekName(startDate)})
+                        </span>
+                      )}
+                      {!isMonday && !isFriday && !cal.holidayName && !cal.customEvent && !cal.isBeforeStart && isAfterAllVisitsFinished && (
+                        <span className="text-[8px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                          <span>🎉</span> Ciclo de visitas concluído
+                        </span>
+                      )}
+                      {!isMonday && !isFriday && !cal.holidayName && !cal.customEvent && !cal.isBeforeStart && !isAfterAllVisitsFinished && (
+                        <span className="text-[8px] text-slate-400 font-semibold">Dia de trabalho interno</span>
+                      )}
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => handleOpenAdd(wIdx, dayName)}
+                    className="w-full py-1.5 px-2 bg-indigo-50 hover:bg-emerald-50 text-indigo-700 hover:text-emerald-700 rounded-xl text-[9px] font-black border border-indigo-100 border-dashed transition-all opacity-0 group-hover/day:opacity-100 focus:opacity-100 flex items-center justify-center gap-1 active:scale-95"
+                  >
+                    <span>+ Adicionar Obra</span>
+                  </button>
+                </div>
+                {isMultiVisit && (
+                  <span className="block text-[8px] font-black text-indigo-500 uppercase text-center tracking-widest">Visitas Agrupadas</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1046,6 +1367,13 @@ const App: React.FC = () => {
                     <span className="text-[9px] text-slate-400 block">Obras Próximas</span>
                   </button>
                 </div>
+
+                <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl flex items-start gap-2.5">
+                  <CheckCircleIcon className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-emerald-950 font-medium leading-relaxed">
+                    <strong>Regra de Unicidade Garantida:</strong> No mês, cada obra recebe <strong>estritamente 1 visita</strong> (sem repetição). Caso todas as obras sejam visitadas antes do final do mês, os dias restantes são automaticamente reservados para trabalho interno no escritório da Peixoto Gomide.
+                  </p>
+                </div>
               </div>
 
               {/* Detalhe da Rotina / Viagem */}
@@ -1062,6 +1390,13 @@ const App: React.FC = () => {
                 />
               </div>
             </section>
+
+            {/* 3. Calendário Corporativo, Eventos & Feriados */}
+            <CalendarEventManager
+              startDate={startDate}
+              events={customEvents}
+              onChangeEvents={setCustomEvents}
+            />
 
             {/* 4. Campo de Onde Morar (Análise Estratégica de Moradia) */}
             <section className="bg-white p-7 rounded-3xl shadow-sm border border-slate-100 space-y-4">
@@ -1313,59 +1648,69 @@ const App: React.FC = () => {
 
       {result && (
         <div id="report-content" ref={reportRef} className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700 bg-slate-50 p-8 rounded-[40px] shadow-sm border border-slate-200">
-          {/* Diagnostic Summary */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2 space-y-3">
-               <div className="flex items-center justify-between flex-wrap gap-2">
-                 <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Estratégia de Ciclo Logístico (1/2)</h2>
-                 <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md border border-indigo-100">
-                   Início: {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)
-                 </span>
+          {/* PÁGINA 1: Diagnóstico e Visualização de Clusters */}
+          <div id="pdf-page-1" className="space-y-8 bg-transparent">
+            {/* Diagnostic Summary */}
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm md:col-span-2 space-y-3">
+                 <div className="flex items-center justify-between flex-wrap gap-2">
+                   <h2 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Estratégia de Ciclo Logístico (1/2)</h2>
+                   <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md border border-indigo-100">
+                     Início: {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)
+                   </span>
+                 </div>
+                 <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
+              </div>
+              <div className="bg-indigo-600 p-8 rounded-3xl shadow-lg shadow-indigo-100 text-white flex flex-col justify-center text-center">
+                 <span className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-1">Impacto Logístico Mensal</span>
+                 <div className="text-2xl md:text-3xl font-black leading-tight break-words px-2">{result.housingRecommendation.comparison.monthlySavings}</div>
+              </div>
+            </section>
+
+            {/* Geographical Visualization */}
+            <section className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
+               <div className="mb-6 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <MapIcon className="h-6 w-6 text-indigo-500" />
+                    <h3 className="text-xl font-black text-slate-800 underline decoration-indigo-200 decoration-4 underline-offset-4">Visualização de Clusters de Obra</h3>
+                  </div>
                </div>
-               <p className="text-slate-800 text-xl font-bold leading-snug italic">"{result.diagnosis}"</p>
-            </div>
-            <div className="bg-indigo-600 p-8 rounded-3xl shadow-lg shadow-indigo-100 text-white flex flex-col justify-center text-center">
-               <span className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-1">Impacto Logístico Mensal</span>
-               <div className="text-5xl font-black tabular-nums">{result.housingRecommendation.comparison.monthlySavings}</div>
-            </div>
-          </section>
+               <SiteVisualizer clusters={result.clusters} sites={processInput()} />
+            </section>
+          </div>
 
-          {/* Geographical Visualization */}
-          <section className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-             <div className="mb-6 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <MapIcon className="h-6 w-6 text-indigo-500" />
-                  <h3 className="text-xl font-black text-slate-800 underline decoration-indigo-200 decoration-4 underline-offset-4">Visualização de Clusters de Obra</h3>
-                </div>
-             </div>
-             <SiteVisualizer clusters={result.clusters} />
-          </section>
-
-          {/* Expert Monthly Agenda */}
-          <section className="bg-white p-10 rounded-[50px] border border-slate-100 shadow-sm overflow-hidden">
-             <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          {/* PÁGINA 2: Agenda Mensal - Semanas 1 e 2 */}
+          <section id="pdf-page-2" className="bg-white p-10 rounded-[50px] border border-slate-100 shadow-sm overflow-visible">
+             <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-lg border border-indigo-100">
                       Calendário Real • Novembro de 2026
                     </span>
                     <span className="text-slate-400 text-xs font-semibold">
                       Início em: {formatDisplayDate(startDate)} ({getDayOfWeekName(startDate)}-feira)
                     </span>
+                    <span className="px-3 py-1 bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase rounded-lg border border-emerald-200 flex items-center gap-1.5">
+                      <span>🎯</span> 1 Visita por Obra no Mês ({scheduleStats?.uniqueSitesCount || 0} obras • Sem repetições)
+                    </span>
                   </div>
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">Agenda: Mês de Auditoria (Visitas)</h3>
                   <p className="text-slate-500 mt-2 font-medium italic">
-                    "Visitas alocadas estritamente nos dias permitidos ({availableDays.join(', ')}). Segunda e Sexta dedicadas ao escritório fixo na Peixoto Gomide e deslocamento interiorano."
+                    "Visitas alocadas estritamente nos dias permitidos ({availableDays.join(', ')}). Cada obra da planilha é visitada apenas 1 vez. Concluídas todas as obras, os dias restantes são dedicados ao trabalho interno no escritório Peixoto Gomide."
                   </p>
                 </div>
-                <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100 flex-wrap">
+                   <div className="flex flex-col items-center border-r border-slate-200 pr-6">
+                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Obras Roteirizadas</span>
+                     <span className="text-xs font-bold text-indigo-600 uppercase">{scheduleStats?.totalVisits || 0} Visitas</span>
+                   </div>
                    <div className="flex flex-col items-center border-r border-slate-200 pr-6">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Office Hub</span>
                      <span className="text-xs font-bold text-emerald-600 uppercase">Peixoto</span>
                    </div>
                    <div className="flex flex-col items-center border-r border-slate-200 pr-6">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Ritmo Máximo</span>
-                     <span className="text-xs font-bold text-indigo-600 uppercase">{maxVisitsPerDay} Obra/dia</span>
+                     <span className="text-xs font-bold text-slate-800 uppercase">{maxVisitsPerDay} Obra/dia</span>
                    </div>
                    <div className="flex flex-col items-center">
                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Metro</span>
@@ -1374,203 +1719,113 @@ const App: React.FC = () => {
                 </div>
              </div>
 
-             <div className="space-y-16">
-               {result.monthlyAgenda.map((week, wIdx) => (
-                 <div key={wIdx} className="page-break-inside-avoid">
-                    <div className="flex items-center justify-between mb-8 flex-wrap gap-2">
-                       <div className="flex items-center gap-3">
-                         <span className="px-6 py-2 bg-slate-900 text-white rounded-2xl text-xs font-black tracking-[0.2em] uppercase">
-                           Semana {week.week}
-                         </span>
-                         <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100">
-                           🗓️ {getWeekRangeFormatted(startDate, wIdx)}
-                         </span>
-                       </div>
-                       <div className="h-px bg-slate-100 flex-1 ml-4 hidden sm:block"></div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                      {allWeekDays.map((dayName) => {
-                        const visits = week.schedule[dayName] || [];
-                        const isMultiVisit = visits.length > 1;
-                        const isMonday = dayName === 'Segunda';
-                        const isFriday = dayName === 'Sexta';
-                        const isAllowed = availableDays.includes(dayName);
-                        const cal = getCalendarDateForDay(startDate, wIdx, dayName);
-
-                        return (
-                          <div key={dayName} className="space-y-4">
-                            <div className="flex items-center justify-between px-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-black text-slate-700 uppercase tracking-wider">{dayName}</span>
-                                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                                  {cal.dateFormatted}
-                                </span>
-                              </div>
-                              {cal.holidayName && (
-                                <span className="text-[8px] font-black uppercase text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                                  {cal.holidayName}
-                                </span>
-                              )}
-                              {cal.isBeforeStart && !cal.holidayName && (
-                                <span className="text-[8px] font-black uppercase text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
-                                  Pré-Início
-                                </span>
-                              )}
-                              {!isAllowed && !cal.holidayName && !cal.isBeforeStart && (
-                                <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
-                                  Escritório
-                                </span>
-                              )}
-                            </div>
-
-                            <div className={`space-y-3 min-h-[160px] p-3 rounded-3xl border border-dashed transition-all relative group/day ${
-                              isMultiVisit 
-                                ? 'bg-indigo-50/50 border-indigo-200' 
-                                : cal.isBeforeStart
-                                ? 'bg-slate-100/60 border-slate-200'
-                                : !isAllowed 
-                                ? 'bg-slate-50/80 border-slate-200' 
-                                : 'bg-slate-50/70 border-slate-200'
-                            }`}>
-                              {visits.length > 0 ? (
-                                <div className="space-y-3">
-                                  {visits.map((visit, sIdx) => (
-                                    <VisitCard 
-                                      key={sIdx} 
-                                      visit={visit} 
-                                      isGrouped={isMultiVisit} 
-                                      onEdit={() => handleOpenEdit(wIdx, dayName, sIdx, visit)}
-                                    />
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="h-full flex flex-col items-center justify-center py-6 px-2 text-center space-y-1 opacity-85 group-hover/day:opacity-100 transition-opacity">
-                                   <BuildingOfficeIcon className="h-6 w-6 text-slate-400 mb-1" />
-                                   <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Escritório Peixoto Gomide</span>
-                                   {isMonday && (
-                                     <span className="text-[8px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                                       🚗 Chegada de Rio Claro
-                                     </span>
-                                   )}
-                                   {isFriday && (
-                                     <span className="text-[8px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                       🚗 Retorno ao Interior
-                                     </span>
-                                   )}
-                                   {cal.holidayName && (
-                                     <span className="text-[8px] font-black text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
-                                       Feriado Nacional ({cal.holidayName})
-                                     </span>
-                                   )}
-                                   {cal.isBeforeStart && (
-                                     <span className="text-[8px] font-semibold text-slate-400">
-                                       Visitas iniciam em {formatDisplayDateShort(startDate)} ({getDayOfWeekName(startDate)})
-                                     </span>
-                                   )}
-                                   {!isMonday && !isFriday && !cal.holidayName && !cal.isBeforeStart && (
-                                     <span className="text-[8px] text-slate-400 font-semibold">Dia de trabalho interno</span>
-                                   )}
-                                </div>
-                              )}
-                              
-                              <button
-                                onClick={() => handleOpenAdd(wIdx, dayName)}
-                                className="w-full py-1.5 px-2 bg-indigo-50 hover:bg-emerald-50 text-indigo-700 hover:text-emerald-700 rounded-xl text-[9px] font-black border border-indigo-100 border-dashed transition-all opacity-0 group-hover/day:opacity-100 focus:opacity-100 flex items-center justify-center gap-1 active:scale-95"
-                              >
-                                <span>+ Adicionar Obra</span>
-                              </button>
-                            </div>
-                            {isMultiVisit && (
-                              <span className="block text-[8px] font-black text-indigo-500 uppercase text-center tracking-widest">Visitas Agrupadas</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                 </div>
-               ))}
+             <div className="space-y-12">
+               {result.monthlyAgenda.slice(0, 2).map((week, wIdx) => renderWeekBlock(week, wIdx))}
              </div>
           </section>
 
-          {/* Housing Strategy Insight - "Onde Morar em SP" */}
-          <section className="bg-[#0f172a] rounded-[50px] p-12 text-white flex flex-col lg:flex-row gap-12 items-center relative overflow-hidden shadow-2xl">
-             <div className="absolute bottom-0 right-0 w-80 h-80 bg-emerald-500/10 blur-[120px] rounded-full"></div>
-             <div className="flex-1 space-y-8 relative z-10">
-                <div>
-                   <div className="flex items-center gap-2 mb-2">
-                     <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase rounded-lg border border-emerald-500/30">
-                       Análise Estratégica de Moradia
-                     </span>
-                     <span className="text-slate-400 text-xs font-semibold">
-                       Base Atual: {currentAddress}
-                     </span>
-                   </div>
-                   <h3 className="text-4xl font-black mb-3 tracking-tight">Melhor Lugar para Morar</h3>
-                   <p className="text-indigo-200 font-medium text-lg leading-relaxed">
-                     Bairros recomendados que equilibram o escritório na Peixoto Gomide, as obras e a rota para o interior:
-                   </p>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                   {result.housingRecommendation.topNeighborhoods.map(b => (
-                     <span key={b} className="px-8 py-5 bg-white/5 rounded-3xl font-black text-xl border border-white/10 hover:bg-white/15 transition-all cursor-default shadow-sm text-emerald-300">
-                       {b}
-                     </span>
-                   ))}
-                </div>
-                <div className="bg-white/5 p-6 rounded-2xl border border-white/10 space-y-2">
-                  <p className="text-slate-300 text-sm leading-relaxed font-medium">
-                    "{result.housingRecommendation.centroidDescription}"
-                  </p>
-                  <p className="text-xs text-indigo-300 font-semibold italic">
-                    ℹ️ Sua residência na Brigadeiro Luís Antônio 1649 (Bela Vista) é excelente para a rotina semanal de segunda a sexta: acesso expresso ao escritório da Peixoto Gomide (~8 a 12 min) e saída rápida para o Corredor Norte-Sul / Rodovias Bandeirantes e Anhanguera no trajeto para Rio Claro.
-                  </p>
-                </div>
-             </div>
-             <div className="w-full lg:w-[420px] bg-white p-10 rounded-[40px] text-slate-900 shadow-2xl relative z-10 border border-slate-100">
-                <div className="space-y-8">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tempo Médio Sugerido</span>
-                      <span className="text-5xl font-black text-indigo-600 tabular-nums tracking-tighter">
-                        {result.housingRecommendation.comparison.suggestedAvgTime}
-                      </span>
-                    </div>
-                    <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200">
-                      Otimizado
-                    </div>
-                  </div>
+          {/* PÁGINA 3: Agenda Mensal - Semanas 3 e 4 (se existirem) */}
+          {result.monthlyAgenda.length > 2 && (
+            <section id="pdf-page-3" className="bg-white p-10 rounded-[50px] border border-slate-100 shadow-sm overflow-visible">
+               <div className="mb-10 flex items-center justify-between pb-4 border-b border-slate-100 flex-wrap gap-2">
+                 <div className="flex items-center gap-3">
+                   <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-lg border border-indigo-100">
+                     Novembro de 2026
+                   </span>
+                   <h3 className="text-2xl font-black text-slate-900 tracking-tight">Agenda Mensal de Visitas (Continuação)</h3>
+                 </div>
+                 <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-xl uppercase tracking-wider">
+                   Semanas 3 e 4
+                 </span>
+               </div>
+               <div className="space-y-12">
+                 {result.monthlyAgenda.slice(2).map((week, idx) => renderWeekBlock(week, idx + 2))}
+               </div>
+            </section>
+          )}
 
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-bold">Tempo Médio Atual:</span>
-                      <span className="font-black text-slate-800">{result.housingRecommendation.comparison.currentAvgTime}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-bold">Economia Mensal Estimada:</span>
-                      <span className="font-black text-emerald-600">{result.housingRecommendation.comparison.monthlySavings}</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-100 space-y-2">
-                     <p className="text-xs text-slate-600 font-bold leading-relaxed italic">
-                       "Os eixos Paraíso, Ana Rosa e Bela Vista conectam as Linhas 1-Azul e 2-Verde, minimizando baldeações e garantindo acesso expresso tanto ao escritório quanto aos clusters de obras."
+          {/* PÁGINA 4: Análise Estratégica de Moradia, Resumo e Rodapé */}
+          <div id="pdf-page-4" className="space-y-8 bg-transparent">
+            {/* Housing Strategy Insight - "Onde Morar em SP" */}
+            <section className="bg-[#0f172a] rounded-[50px] p-12 text-white flex flex-col lg:flex-row gap-12 items-center relative overflow-hidden shadow-2xl">
+               <div className="absolute bottom-0 right-0 w-80 h-80 bg-emerald-500/10 blur-[120px] rounded-full"></div>
+               <div className="flex-1 space-y-8 relative z-10">
+                  <div>
+                     <div className="flex items-center gap-2 mb-2">
+                       <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase rounded-lg border border-emerald-500/30">
+                         Análise Estratégica de Moradia
+                       </span>
+                       <span className="text-slate-400 text-xs font-semibold">
+                         Base Atual: {currentAddress}
+                       </span>
+                     </div>
+                     <h3 className="text-4xl font-black mb-3 tracking-tight">Melhor Lugar para Morar</h3>
+                     <p className="text-indigo-200 font-medium text-lg leading-relaxed">
+                       Bairros recomendados que equilibram o escritório na Peixoto Gomide, as obras e a rota para o interior:
                      </p>
                   </div>
-                </div>
-             </div>
-          </section>
+                  <div className="flex flex-wrap gap-4">
+                     {result.housingRecommendation.topNeighborhoods.map(b => (
+                       <span key={b} className="px-8 py-5 bg-white/5 rounded-3xl font-black text-xl border border-white/10 hover:bg-white/15 transition-all cursor-default shadow-sm text-emerald-300">
+                         {b}
+                       </span>
+                     ))}
+                  </div>
+                  <div className="bg-white/5 p-6 rounded-2xl border border-white/10 space-y-2">
+                    <p className="text-slate-300 text-sm leading-relaxed font-medium">
+                      "{result.housingRecommendation.centroidDescription}"
+                    </p>
+                    <p className="text-xs text-indigo-300 font-semibold italic">
+                      ℹ️ Sua residência na Brigadeiro Luís Antônio 1649 (Bela Vista) é excelente para a rotina semanal de segunda a sexta: acesso expresso ao escritório da Peixoto Gomide (~8 a 12 min) e saída rápida para o Corredor Norte-Sul / Rodovias Bandeirantes e Anhanguera no trajeto para Rio Claro.
+                    </p>
+                  </div>
+               </div>
+               <div className="w-full lg:w-[420px] bg-white p-10 rounded-[40px] text-slate-900 shadow-2xl relative z-10 border border-slate-100">
+                  <div className="space-y-8">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tempo Médio Sugerido</span>
+                        <span className="text-3xl md:text-4xl font-black text-indigo-600 leading-tight tracking-tight">
+                          {result.housingRecommendation.comparison.suggestedAvgTime}
+                        </span>
+                      </div>
+                      <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200">
+                        Otimizado
+                      </div>
+                    </div>
 
-          {/* Performance Summary */}
-          <section className="bg-emerald-50 border-2 border-emerald-100 p-12 rounded-[50px] text-center max-w-5xl mx-auto shadow-sm">
-             <h3 className="text-[10px] font-black text-emerald-600 mb-6 uppercase tracking-[0.4em]">Resumo de Performance Operacional (Ciclo Trimestral)</h3>
-             <p className="text-emerald-900 text-xl font-bold leading-relaxed max-w-3xl mx-auto italic">
-               {result.timeSavingsSummary}
-             </p>
-          </section>
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-bold">Tempo Médio Atual:</span>
+                        <span className="font-black text-slate-800">{result.housingRecommendation.comparison.currentAvgTime}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-bold">Economia Mensal Estimada:</span>
+                        <span className="font-black text-emerald-600">{result.housingRecommendation.comparison.monthlySavings}</span>
+                      </div>
+                    </div>
 
-          <footer className="mt-10 py-12 text-center border-t border-slate-200">
-             <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em] italic">Relatório Logístico • Hub Peixoto Gomide • {new Date().toLocaleDateString()}</p>
-          </footer>
+                    <div className="pt-4 border-t border-slate-100 space-y-2">
+                       <p className="text-xs text-slate-600 font-bold leading-relaxed italic">
+                         "Os eixos Paraíso, Ana Rosa e Bela Vista conectam as Linhas 1-Azul e 2-Verde, minimizando baldeações e garantindo acesso expresso tanto ao escritório quanto aos clusters de obras."
+                       </p>
+                    </div>
+                  </div>
+               </div>
+            </section>
+
+            {/* Performance Summary */}
+            <section className="bg-emerald-50 border-2 border-emerald-100 p-10 rounded-[50px] text-center max-w-5xl mx-auto shadow-sm">
+               <h3 className="text-[10px] font-black text-emerald-600 mb-6 uppercase tracking-[0.4em]">Resumo de Performance Operacional (Ciclo Trimestral)</h3>
+               <p className="text-emerald-900 text-lg md:text-xl font-bold leading-relaxed max-w-3xl mx-auto italic">
+                 {result.timeSavingsSummary}
+               </p>
+            </section>
+
+            <footer className="py-8 text-center border-t border-slate-200">
+               <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em] italic">Relatório Logístico • Hub Peixoto Gomide • {new Date().toLocaleDateString()}</p>
+            </footer>
+          </div>
         </div>
       )}
       
@@ -1598,6 +1853,46 @@ const App: React.FC = () => {
             </div>
 
             <div className="space-y-4">
+              {/* Seleção rápida a partir da planilha */}
+              {isNewVisit && (parsedSites.length > 0 || rawInput.trim().length > 0) && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Preencher com Obra da Planilha
+                  </label>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const allS = parsedSites.length > 0 ? parsedSites : processInput();
+                      const found = allS.find(s => s.nomeObra === e.target.value);
+                      if (found) {
+                        setEditingVisit({
+                          ...editingVisit,
+                          visit: {
+                            ...editingVisit.visit,
+                            siteName: found.nomeObra,
+                            metroLine: '',
+                            busInfo: '',
+                            walkingMinutes: 8
+                          }
+                        });
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- Selecionar obra da planilha --</option>
+                    {(parsedSites.length > 0 ? parsedSites : processInput()).map((s, idx) => {
+                      const k = normalizeSiteKey(s.nomeObra);
+                      const loc = scheduleStats?.siteToLocationMap?.get(k);
+                      return (
+                        <option key={idx} value={s.nomeObra}>
+                          {s.nomeObra} {loc ? `(Já agendada: Sem. ${loc.weekIdx + 1} - ${loc.dayName})` : '⭐ (Pendente)'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
               {/* Nome da Obra */}
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Nome da Obra</label>
@@ -1611,6 +1906,27 @@ const App: React.FC = () => {
                   placeholder="Nome do Empreendimento ou Obra"
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all text-sm"
                 />
+
+                {(() => {
+                  const normalizedCurrentName = normalizeSiteKey(editingVisit.visit.siteName);
+                  const otherLocation = normalizedCurrentName ? scheduleStats?.siteToLocationMap?.get(normalizedCurrentName) : undefined;
+                  const isDuplicate = Boolean(otherLocation && (
+                    isNewVisit || 
+                    otherLocation.weekIdx !== editingVisit.weekIdx || 
+                    otherLocation.dayName !== editingVisit.dayName
+                  ));
+
+                  if (!isDuplicate || !otherLocation) return null;
+
+                  return (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] font-medium leading-snug mt-1.5 flex items-start gap-1.5">
+                      <span className="text-sm shrink-0">⚠️</span>
+                      <span>
+                        <strong>Aviso de Unicidade:</strong> A obra "{editingVisit.visit.siteName}" já está agendada na <strong>Semana {otherLocation.weekIdx + 1} ({otherLocation.dayName})</strong>. A regra operacional é de 1 visita por obra no mês.
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Linha do Metrô */}

@@ -7,6 +7,12 @@ export interface ConstructionSite {
   cidade: string;
   estado: string;
   cep: string;
+  lat?: number;
+  lng?: number;
+  macroRegion?: string;
+  cityResolved?: string;
+  isOutsideCapital?: boolean;
+  distanceFromHubKm?: number;
 }
 
 export interface VisitDetail {
@@ -23,6 +29,9 @@ export interface Cluster {
   name: string;
   sites: string[];
   region: string;
+  centerLat?: number;
+  centerLng?: number;
+  radiusKm?: number;
 }
 
 export interface DayRoute {
@@ -67,10 +76,20 @@ export interface AnalysisResult {
   timeSavingsSummary: string;
 }
 
+export interface CalendarEvent {
+  id: string;
+  dateStr: string; // 'YYYY-MM-DD' ou 'DD/MM'
+  title: string;
+  type: 'company' | 'holiday' | 'meeting' | 'bridge';
+  blockVisits: boolean;
+  notes?: string;
+}
+
 export interface SchedulePreferences {
   availableDays: ('Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta')[];
   maxVisitsPerDay: 1 | 2 | 3;
   commuteNote?: string;
   housingPreference?: 'balanced' | 'office' | 'works';
   startDate?: string;
+  customEvents?: CalendarEvent[];
 }
