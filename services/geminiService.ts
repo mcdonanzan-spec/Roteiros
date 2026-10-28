@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { ConstructionSite, AnalysisResult, VisitDetail, SchedulePreferences, Cluster, CalendarEvent } from "../types";
 import { 
   geocodeSite, 
@@ -9,10 +8,6 @@ import {
   RESIDENCIA_BRIGADEIRO, 
   SiteWithGeo 
 } from "./geoService";
-
-// Initialize Gemini client using API key from environment
-const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
-const ai = new GoogleGenAI({ apiKey });
 
 /**
  * Determina se determinado dia de uma semana da agenda ocorre antes da data de início oficial das visitas.
@@ -181,165 +176,29 @@ DIRETRIZES TÉCNICAS E MANDATÓRIAS DE ROTEIRIZAÇÃO GEOGRÁFICA REAL:
   let parsed: AnalysisResult;
 
   try {
-    const geminiPromise = ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            diagnosis: { type: Type.STRING },
-            currentEvaluation: {
-              type: Type.OBJECT,
-              properties: {
-                distanceAvg: { type: Type.STRING },
-                timeAvg: { type: Type.STRING },
-                criticalRegions: { type: Type.ARRAY, items: { type: Type.STRING } },
-                efficiency: { type: Type.STRING },
-                efficiencyDescription: { type: Type.STRING }
-              },
-              required: ["distanceAvg", "timeAvg", "criticalRegions", "efficiency", "efficiencyDescription"]
-            },
-            housingRecommendation: {
-              type: Type.OBJECT,
-              properties: {
-                topNeighborhoods: { type: Type.ARRAY, items: { type: Type.STRING } },
-                centroidDescription: { type: Type.STRING },
-                comparison: {
-                  type: Type.OBJECT,
-                  properties: {
-                    currentAvgTime: { type: Type.STRING },
-                    suggestedAvgTime: { type: Type.STRING },
-                    monthlySavings: { type: Type.STRING }
-                  },
-                  required: ["currentAvgTime", "suggestedAvgTime", "monthlySavings"]
-                }
-              },
-              required: ["topNeighborhoods", "centroidDescription", "comparison"]
-            },
-            clusters: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  sites: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  region: { type: Type.STRING }
-                },
-                required: ["name", "sites", "region"]
-              }
-            },
-            weeklyRoute: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  day: { type: Type.STRING },
-                  visits: { 
-                    type: Type.ARRAY, 
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        siteName: { type: Type.STRING },
-                        metroLine: { type: Type.STRING },
-                        walkingMinutes: { type: Type.NUMBER },
-                        busInfo: { type: Type.STRING },
-                        isFullTurn: { type: Type.BOOLEAN }
-                      },
-                      required: ["siteName", "isFullTurn"]
-                    }
-                  },
-                  estimatedTravelTime: { type: Type.STRING },
-                  totalTime: { type: Type.STRING }
-                },
-                required: ["day", "visits", "estimatedTravelTime", "totalTime"]
-              }
-            },
-            monthlyAgenda: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  week: { type: Type.NUMBER },
-                  schedule: { 
-                    type: Type.OBJECT,
-                    properties: {
-                      Segunda: { type: Type.ARRAY, items: { 
-                        type: Type.OBJECT,
-                        properties: {
-                          siteName: { type: Type.STRING },
-                          metroLine: { type: Type.STRING },
-                          walkingMinutes: { type: Type.NUMBER },
-                          busInfo: { type: Type.STRING },
-                          isFullTurn: { type: Type.BOOLEAN }
-                        },
-                        required: ["siteName", "isFullTurn"]
-                      } },
-                      Terça: { type: Type.ARRAY, items: { 
-                        type: Type.OBJECT,
-                        properties: {
-                          siteName: { type: Type.STRING },
-                          metroLine: { type: Type.STRING },
-                          walkingMinutes: { type: Type.NUMBER },
-                          busInfo: { type: Type.STRING },
-                          isFullTurn: { type: Type.BOOLEAN }
-                        },
-                        required: ["siteName", "isFullTurn"]
-                      } },
-                      Quarta: { type: Type.ARRAY, items: { 
-                        type: Type.OBJECT,
-                        properties: {
-                          siteName: { type: Type.STRING },
-                          metroLine: { type: Type.STRING },
-                          walkingMinutes: { type: Type.NUMBER },
-                          busInfo: { type: Type.STRING },
-                          isFullTurn: { type: Type.BOOLEAN }
-                        },
-                        required: ["siteName", "isFullTurn"]
-                      } },
-                      Quinta: { type: Type.ARRAY, items: { 
-                        type: Type.OBJECT,
-                        properties: {
-                          siteName: { type: Type.STRING },
-                          metroLine: { type: Type.STRING },
-                          walkingMinutes: { type: Type.NUMBER },
-                          busInfo: { type: Type.STRING },
-                          isFullTurn: { type: Type.BOOLEAN }
-                        },
-                        required: ["siteName", "isFullTurn"]
-                      } },
-                      Sexta: { type: Type.ARRAY, items: { 
-                        type: Type.OBJECT,
-                        properties: {
-                          siteName: { type: Type.STRING },
-                          metroLine: { type: Type.STRING },
-                          walkingMinutes: { type: Type.NUMBER },
-                          busInfo: { type: Type.STRING },
-                          isFullTurn: { type: Type.BOOLEAN }
-                        },
-                        required: ["siteName", "isFullTurn"]
-                      } }
-                    },
-                    required: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]
-                  }
-                },
-                required: ["week", "schedule"]
-              }
-            },
-            timeSavingsSummary: { type: Type.STRING }
-          },
-          required: ["diagnosis", "currentEvaluation", "housingRecommendation", "clusters", "weeklyRoute", "monthlyAgenda", "timeSavingsSummary"]
-        }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const apiResponse = await fetch('/api/gemini/analyze', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout de requisição Gemini API')), 5000)
-    );
+    if (!apiResponse.ok) {
+      throw new Error(`Servidor Gemini retornou status ${apiResponse.status}`);
+    }
 
-    const response = await Promise.race([geminiPromise, timeoutPromise]);
-    parsed = JSON.parse(response.text || "{}");
+    const json = await apiResponse.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.error || 'Resposta inválida do servidor Gemini');
+    }
+
+    parsed = json.data;
   } catch (err) {
     console.warn("Utilizando otimizador heurístico local determinístico de alta performance:", err);
     parsed = generateDeterministicRouting(
