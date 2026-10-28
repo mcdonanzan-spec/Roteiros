@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences, CalendarEvent } from './types';
+import { ConstructionSite, AnalysisResult, VisitDetail, MonthAgenda, SchedulePreferences, CalendarEvent, InterSiteTransfer } from './types';
 import { analyzeLogistics, validateAndEnforceTransit, normalizeSiteKey } from './services/geminiService';
 import { SiteVisualizer } from './components/SiteVisualizer';
 import { CalendarEventManager } from './components/CalendarEventManager';
@@ -24,7 +24,9 @@ import {
   CheckIcon,
   TrashIcon,
   CalendarDaysIcon,
-  AdjustmentsHorizontalIcon
+  AdjustmentsHorizontalIcon,
+  XMarkIcon,
+  ArrowRightIcon
 } from '@heroicons/react/24/outline';
 
 const DEFAULT_RESIDENCE = 'Av. Brigadeiro Luís Antônio, 1649, Bela Vista, São Paulo - SP';
@@ -154,9 +156,10 @@ interface VisitCardProps {
   visit: VisitDetail;
   isGrouped?: boolean;
   onEdit: () => void;
+  onViewTransfer?: (transfer: InterSiteTransfer) => void;
 }
 
-const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
+const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit, onViewTransfer }) => {
   const getMetroStyle = (line: string = '') => {
     const l = line.toLowerCase();
     if (l.includes('azul') || l.includes('l1')) return 'bg-blue-600 text-white';
@@ -222,12 +225,247 @@ const VisitCard: React.FC<VisitCardProps> = ({ visit, isGrouped, onEdit }) => {
             )}
           </div>
         )}
-        {visit.busInfo && (
+
+        {/* Bloco de Rota Entre Obras com Destaque e Preferência Metrô */}
+        {visit.interSiteTransfer ? (
+          <div 
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewTransfer?.(visit.interSiteTransfer!);
+            }}
+            className="p-2.5 bg-gradient-to-br from-indigo-50/95 via-blue-50/90 to-sky-50/80 border border-indigo-200/90 rounded-xl hover:border-indigo-400 hover:shadow-sm transition-all text-left mt-1 cursor-pointer group/tr"
+          >
+            <div className="flex items-center justify-between gap-1 mb-1 flex-wrap">
+              <span className="text-[9px] font-black text-indigo-800 uppercase tracking-tight flex items-center gap-1">
+                <span>🚇</span> Rota Obra 1 ➔ Obra 2
+              </span>
+              <span className="text-[7.5px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
+                <span>⭐</span> Preferência Metrô
+              </span>
+            </div>
+
+            <p className="text-[9.5px] font-bold text-slate-800 leading-snug">
+              {visit.interSiteTransfer.metroOption.title}
+            </p>
+
+            <div className="flex items-center justify-between text-[8.5px] text-slate-500 font-semibold mt-1.5 pt-1 border-t border-indigo-100">
+              <span className="flex items-center gap-1 text-indigo-900 font-black">
+                ⏱️ ~{visit.interSiteTransfer.metroOption.totalMinutes} min
+              </span>
+              <span className="text-indigo-600 font-black group-hover/tr:underline flex items-center gap-0.5">
+                Como Ir Passo a Passo ➔
+              </span>
+            </div>
+
+            <div className="mt-1 text-[8px] font-semibold text-slate-600 leading-tight bg-white/85 p-1 rounded-md border border-indigo-100/60">
+              <span className="text-emerald-700 font-bold">⚖️ {visit.interSiteTransfer.verdict.title}:</span> {visit.interSiteTransfer.metroOption.advantageNote}
+            </div>
+          </div>
+        ) : visit.busInfo ? (
           <div className="flex items-start gap-1.5 text-slate-500">
             <TruckIcon className="h-3 w-3 text-indigo-500 shrink-0 mt-0.5" />
             <span className="text-[9px] font-semibold italic break-words leading-tight text-slate-600">{visit.busInfo}</span>
           </div>
-        )}
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+interface InterSiteTransferModalProps {
+  transfer: InterSiteTransfer | null;
+  onClose: () => void;
+}
+
+const InterSiteTransferModal: React.FC<InterSiteTransferModalProps> = ({ transfer, onClose }) => {
+  if (!transfer) return null;
+  const [activeTab, setActiveTab] = useState<'metro' | 'surface'>('metro');
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-[32px] p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-slate-100 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200 my-8 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-lg border border-indigo-100">
+                Logística de Deslocamento Entre Obras
+              </span>
+              <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase rounded-lg border border-emerald-200 flex items-center gap-1">
+                <span>⭐</span> Preferência por Metrô
+              </span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              Como Ir: {transfer.fromSite} ➔ {transfer.toSite}
+            </h3>
+            <p className="text-xs text-slate-500 font-semibold mt-1">
+              Distância geodésica: <strong>{transfer.distanceKm} km</strong> na Região Metropolitana de São Paulo
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-all"
+          >
+            <XMarkIcon className="h-6 w-6" />
+          </button>
+        </div>
+
+        {/* Veredito comparativo em destaque */}
+        <div className="p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 border-2 border-emerald-300 rounded-2xl flex items-start gap-3 shadow-sm">
+          <span className="text-2xl shrink-0 mt-0.5">⚖️</span>
+          <div className="space-y-1">
+            <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wide">
+              {transfer.verdict.title}
+            </h4>
+            <p className="text-xs text-emerald-900 font-medium leading-relaxed">
+              {transfer.verdict.explanation}
+            </p>
+          </div>
+        </div>
+
+        {/* Seletor de Abas de Transporte */}
+        <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl">
+          <button
+            type="button"
+            onClick={() => setActiveTab('metro')}
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'metro'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>🚇 Rota via Metrô (Preferencial)</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+              activeTab === 'metro' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-200 text-slate-700'
+            }`}>
+              ~{transfer.metroOption.totalMinutes} min
+            </span>
+          </button>
+          {transfer.surfaceOption && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('surface')}
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                activeTab === 'surface'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🚌 Alternativa de Ônibus (Superfície)</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                activeTab === 'surface' ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-200 text-slate-700'
+              }`}>
+                ~{transfer.surfaceOption.durationMinutes} min
+              </span>
+            </button>
+          )}
+        </div>
+
+        {/* Detalhe da Rota Selecionada */}
+        {activeTab === 'metro' ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-black text-indigo-950 uppercase tracking-wide">
+                  Itinerário Metroferroviário Recomendado
+                </span>
+                <span className="text-xs font-black text-indigo-700 bg-white px-2.5 py-1 rounded-lg border border-indigo-100 shadow-xs">
+                  Tempo Total: ~{transfer.metroOption.totalMinutes} min
+                </span>
+              </div>
+              <p className="text-xs text-indigo-900 font-bold leading-snug">
+                {transfer.metroOption.title}
+              </p>
+              <div className="text-[11px] text-slate-700 italic bg-white/90 p-2.5 rounded-xl border border-indigo-100">
+                💡 <strong>Por que é mais vantajoso:</strong> {transfer.metroOption.advantageNote}
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Passo a Passo do Trajeto
+              </h5>
+              <div className="relative border-l-2 border-indigo-300 ml-4 pl-6 space-y-4">
+                {transfer.metroOption.legs && transfer.metroOption.legs.length > 0 ? (
+                  transfer.metroOption.legs.map((leg, lIdx) => (
+                    <div key={lIdx} className="relative group">
+                      <div className="absolute -left-[35px] top-0.5 w-7 h-7 rounded-full bg-white border-2 border-indigo-500 flex items-center justify-center text-xs shadow-xs">
+                        {leg.icon}
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-black text-slate-900">
+                            Etapa {lIdx + 1}: {leg.lineOrRoute || (leg.type === 'walk' ? 'Caminhada' : 'Deslocamento')}
+                          </span>
+                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                            ~{leg.durationMinutes} min
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                          {leg.instruction}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  transfer.metroOption.steps.map((step, sIdx) => (
+                    <div key={sIdx} className="relative">
+                      <div className="absolute -left-[35px] top-0.5 w-7 h-7 rounded-full bg-white border-2 border-indigo-500 flex items-center justify-center text-xs shadow-xs font-bold text-indigo-700">
+                        {sIdx + 1}
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-800 font-medium leading-relaxed">
+                          {step}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : transfer.surfaceOption ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-black text-amber-950 uppercase tracking-wide">
+                  Opção Direta de Superfície (Ônibus)
+                </span>
+                <span className="text-xs font-black text-amber-800 bg-white px-2.5 py-1 rounded-lg border border-amber-200 shadow-xs">
+                  Tempo Estimado: ~{transfer.surfaceOption.durationMinutes} min
+                </span>
+              </div>
+              <p className="text-xs text-amber-900 font-bold leading-snug">
+                {transfer.surfaceOption.title}
+              </p>
+              <div className="text-[11px] text-amber-850 bg-white/90 p-2.5 rounded-xl border border-amber-200">
+                ⚠️ <strong>Atenção ao Trânsito:</strong> {transfer.surfaceOption.notes}
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Etapas de Ônibus
+              </h5>
+              <div className="space-y-2">
+                {transfer.surfaceOption.steps.map((step, sIdx) => (
+                  <div key={sIdx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 font-medium">
+                    {step}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-95"
+          >
+            Entendido / Fechar
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -306,6 +544,9 @@ const App: React.FC = () => {
     visit: VisitDetail;
   } | null>(null);
   const [isNewVisit, setIsNewVisit] = useState(false);
+
+  // Modal de transferência entre obras (deslocamento detalhado com prioridade metrô)
+  const [selectedTransfer, setSelectedTransfer] = useState<InterSiteTransfer | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -775,7 +1016,7 @@ const App: React.FC = () => {
           const names = visits.map(v => `**${v.siteName}**${v.isFullTurn ? ' (Integral)' : ''}`).join('<br>');
           const details = visits.map(v => {
             let info = `${v.metroLine || 'N/A'}`;
-            if (v.walkingMinutes) info += ` 🚶 ${v.walkingMinutes}min`;
+            if (v.walkingMinutes !== undefined) info += ` 🚶 ${v.walkingMinutes}min`;
             if (v.busInfo) info += ` 🚌 ${v.busInfo}`;
             if (v.transitForced) info += ` ⚠️ *(Transporte Obrigatório: caminhada > 15 min)*`;
             return info;
@@ -800,6 +1041,42 @@ const App: React.FC = () => {
       });
       md += `\n`;
     });
+
+    // Seção dedicada de Roteirização Entre Obras (Nos dias de 2 visitas)
+    let transferSections = '';
+    res.monthlyAgenda.forEach((week, wIdx) => {
+      const days: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+      days.forEach((day) => {
+        const visits = week.schedule[day] || [];
+        if (visits.length >= 2) {
+          const second = visits[1];
+          if (second && second.interSiteTransfer) {
+            const tr = second.interSiteTransfer;
+            const cal = getCalendarDateForDay(startDate, wIdx, day, customEvents);
+            transferSections += `### 🚇 ${day} (${cal.dateFormatted}): ${tr.fromSite} ➔ ${tr.toSite}\n`;
+            transferSections += `- **Veredito:** ${tr.verdict.title} — ${tr.verdict.explanation}\n`;
+            transferSections += `- **Rota Preferencial (Metrô):** ${tr.metroOption.title} (~${tr.metroOption.totalMinutes} min)\n`;
+            transferSections += `  - **Por que é mais vantajoso:** ${tr.metroOption.advantageNote}\n`;
+            if (tr.metroOption.legs && tr.metroOption.legs.length > 0) {
+              transferSections += `  - **Itinerário Passo a Passo:**\n`;
+              tr.metroOption.legs.forEach((leg, i) => {
+                transferSections += `    ${i + 1}. [${leg.lineOrRoute || leg.type}] ${leg.instruction} (~${leg.durationMinutes} min)\n`;
+              });
+            }
+            if (tr.surfaceOption) {
+              transferSections += `- **Alternativa de Superfície (Ônibus):** ${tr.surfaceOption.title} (~${tr.surfaceOption.durationMinutes} min) — *${tr.surfaceOption.notes}*\n`;
+            }
+            transferSections += `\n`;
+          }
+        }
+      });
+    });
+
+    if (transferSections) {
+      md += `## 🚇 Deslocamento Passo a Passo Entre Obras (Preferência por Metrô)\n\n`;
+      md += `_Para os dias com 2 visitas no mesmo dia, cálculo comparativo priorizando a malha metroferroviária contra congestionamentos de vias arteriais:_\n\n`;
+      md += transferSections;
+    }
 
     md += `## 🚀 Resumo de Performance\n\n`;
     md += `${res.timeSavingsSummary}\n\n`;
@@ -1000,12 +1277,40 @@ const App: React.FC = () => {
                   {visits.length > 0 ? (
                     <div className="space-y-3">
                       {visits.map((visit, sIdx) => (
-                        <VisitCard 
-                          key={sIdx} 
-                          visit={visit} 
-                          isGrouped={isMultiVisit} 
-                          onEdit={() => handleOpenEdit(wIdx, dayName, sIdx, visit)}
-                        />
+                        <React.Fragment key={sIdx}>
+                          {sIdx > 0 && visits[sIdx].interSiteTransfer && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTransfer(visits[sIdx].interSiteTransfer || null)}
+                              className="w-full text-left p-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/90 rounded-xl hover:border-blue-400 hover:shadow-sm transition-all group flex items-center justify-between gap-2 shadow-xs"
+                              title="Clique para ver itinerário detalhado com prioridade metrô"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-base shrink-0">🚇</span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 text-[9.5px] font-black text-blue-950 uppercase tracking-tight">
+                                    <span>Deslocamento O1 ➔ O2</span>
+                                    <span className="text-indigo-600 font-bold bg-white px-1.5 py-0.2 rounded border border-indigo-100">
+                                      ~{visits[sIdx].interSiteTransfer?.totalDurationMinutes} min
+                                    </span>
+                                  </div>
+                                  <p className="text-[9px] text-blue-800 line-clamp-1 font-medium">
+                                    {visits[sIdx].interSiteTransfer?.summary}
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="text-[8.5px] font-black text-blue-600 bg-white px-2 py-1 rounded-lg border border-blue-200 group-hover:bg-blue-600 group-hover:text-white transition-colors shrink-0">
+                                Ver Rota ➔
+                              </span>
+                            </button>
+                          )}
+                          <VisitCard 
+                            visit={visit} 
+                            isGrouped={isMultiVisit} 
+                            onEdit={() => handleOpenEdit(wIdx, dayName, sIdx, visit)}
+                            onViewTransfer={(tr) => setSelectedTransfer(tr)}
+                          />
+                        </React.Fragment>
                       ))}
                     </div>
                   ) : (
@@ -2063,6 +2368,12 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal de Detalhamento de Trajeto Entre Obras (Metrô Prioritário) */}
+      <InterSiteTransferModal 
+        transfer={selectedTransfer} 
+        onClose={() => setSelectedTransfer(null)} 
+      />
     </div>
   );
 };

@@ -15,6 +15,39 @@ export interface ConstructionSite {
   distanceFromHubKm?: number;
 }
 
+export interface TransitLeg {
+  type: 'walk' | 'metro' | 'bus' | 'transfer';
+  icon: string;
+  instruction: string;
+  lineOrRoute?: string;
+  durationMinutes: number;
+}
+
+export interface InterSiteTransfer {
+  fromSite: string;
+  toSite: string;
+  distanceKm: number;
+  metroOption: {
+    title: string;
+    totalMinutes: number;
+    steps: string[];
+    legs: TransitLeg[];
+    advantageNote: string;
+  };
+  surfaceOption?: {
+    title: string;
+    durationMinutes: number;
+    steps: string[];
+    notes: string;
+  };
+  verdict: {
+    recommendedMode: 'metro' | 'surface' | 'walk';
+    title: string;
+    explanation: string;
+  };
+  shortSummary: string;
+}
+
 export interface VisitDetail {
   siteName: string;
   metroLine?: string;
@@ -23,6 +56,7 @@ export interface VisitDetail {
   isFullTurn: boolean;
   transitForced?: boolean;
   originalWalkingMinutes?: number;
+  interSiteTransfer?: InterSiteTransfer;
 }
 
 export interface Cluster {

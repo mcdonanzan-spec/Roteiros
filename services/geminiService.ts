@@ -4,6 +4,7 @@ import {
   geocodeSite, 
   areSitesLogisticallyCompatible, 
   calculateDistanceKm, 
+  calculateInterSiteTransfer,
   HUB_PEIXOTO_GOMIDE, 
   RESIDENCIA_BRIGADEIRO, 
   SiteWithGeo 
@@ -481,12 +482,15 @@ export function generateDeterministicRouting(
 
         if (compIdx !== -1) {
           const secondSite = unassigned.splice(compIdx, 1)[0];
+          const transfer = calculateInterSiteTransfer(firstSite, secondSite);
           dayVisits.push({
             siteName: secondSite.nomeObra,
             metroLine: secondSite.suggestedTransit,
             walkingMinutes: 7,
-            busInfo: undefined,
-            isFullTurn: false
+            busInfo: transfer.shortSummary,
+            isFullTurn: false,
+            transitForced: true,
+            interSiteTransfer: transfer
           });
         }
       }
@@ -627,20 +631,13 @@ export function validateAndEnforceTransit(
         geoPrev.endereco.toLowerCase().trim() === geo.endereco.toLowerCase().trim();
 
       if (!isSameAddress) {
-        const needsTransit = !visit.busInfo || 
-          visit.busInfo.trim() === '' || 
-          visit.busInfo.toLowerCase().includes('nulo') || 
-          (typeof visit.walkingMinutes === 'number' && visit.walkingMinutes > MAX_WALK_LIMIT);
-
-        if (needsTransit) {
-          visit.transitForced = true;
-          if (!visit.busInfo || visit.busInfo.trim() === '' || visit.busInfo.toLowerCase().includes('nulo')) {
-            visit.busInfo = `Ônibus SPTrans / Metrô para deslocamento entre obras (${previousVisit.siteName} ➔ ${visit.siteName})`;
-          }
-          if (typeof visit.walkingMinutes === 'number' && visit.walkingMinutes > MAX_WALK_LIMIT) {
-            visit.originalWalkingMinutes = visit.walkingMinutes;
-            visit.walkingMinutes = 7;
-          }
+        const transfer = calculateInterSiteTransfer(geoPrev, geo);
+        visit.interSiteTransfer = transfer;
+        visit.transitForced = true;
+        visit.busInfo = transfer.shortSummary;
+        if (typeof visit.walkingMinutes === 'number' && visit.walkingMinutes > MAX_WALK_LIMIT) {
+          visit.originalWalkingMinutes = visit.walkingMinutes;
+          visit.walkingMinutes = 7;
         }
       }
     }
